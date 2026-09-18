@@ -2,7 +2,7 @@
   "use strict";
 
   const { CONTAINERS, planLoad } = window.ContainerPacking;
-  const STORAGE_KEY = "container-loader-state-v1";
+  const STORAGE_KEY = "container-loader-state-v2";
   const COLORS = [
     "#0b766e",
     "#2762b8",
@@ -17,12 +17,21 @@
   const DEFAULT_ROW = {
     sku: "SKU-001",
     name: "纸箱货",
+    packageType: "carton",
     length: 600,
     width: 400,
     height: 400,
+    diameter: 400,
+    cylinderLength: 600,
+    cylinderAxis: "length",
+    clearance: 0,
+    baseHeight: 0,
+    dimensionsIncludeBase: true,
     weight: 12,
+    topLoadKg: 0,
+    supportRequired: 1,
+    onlyBottom: false,
     quantity: 1000,
-    stackable: true,
     rotation: "all",
   };
 
@@ -32,6 +41,15 @@
     containerLength: document.querySelector("#containerLength"),
     containerHeight: document.querySelector("#containerHeight"),
     containerPayload: document.querySelector("#containerPayload"),
+    longCargoWidthColumns: document.querySelector(
+      "#longCargoWidthColumns"
+    ),
+    longCargoLengthPositions: document.querySelector(
+      "#longCargoLengthPositions"
+    ),
+    longCargoMaxLayers: document.querySelector(
+      "#longCargoMaxLayers"
+    ),
     containerState: document.querySelector("#containerState"),
     cargoRows: document.querySelector("#cargoRows"),
     cargoCount: document.querySelector("#cargoCount"),
@@ -240,6 +258,12 @@
     elements.containerLength.value = state.container.length;
     elements.containerHeight.value = state.container.height;
     elements.containerPayload.value = state.container.payload;
+    elements.longCargoWidthColumns.value =
+      state.container.longCargoWidthColumns ?? 0;
+    elements.longCargoLengthPositions.value =
+      state.container.longCargoLengthPositions ?? 0;
+    elements.longCargoMaxLayers.value =
+      state.container.longCargoMaxLayers ?? 0;
     elements.containerState.textContent =
       state.container.id === "custom" ? "自定义" : state.container.name;
   }
@@ -248,6 +272,50 @@
     elements.cargoRows.innerHTML = state.rows
       .map((row, index) => {
         const color = COLORS[index % COLORS.length];
+        const isCylinder = row.packageType === "cylinder";
+        const hasWoodenBase = ["wooden", "pallet"].includes(
+          row.packageType
+        );
+        const dimensions = isCylinder
+          ? `
+              <div class="dimension-input">
+                <input type="number" min="1" step="0.1" value="${numberValue(row.diameter, "")}" data-field="diameter" aria-label="圆柱直径" />
+                <span>直径</span>
+              </div>
+              <div class="dimension-input">
+                <input type="number" min="1" step="1" value="${numberValue(row.cylinderLength, "")}" data-field="cylinderLength" aria-label="圆柱长度" />
+                <span>长度</span>
+              </div>
+              <div class="dimension-input">
+                <input type="number" min="0" step="0.01" value="${numberValue(row.weight, "")}" data-field="weight" aria-label="单件重量" />
+                <span>kg</span>
+              </div>
+              <div class="dimension-input dimension-select">
+                <select data-field="cylinderAxis" aria-label="圆柱轴向">
+                  <option value="length" ${row.cylinderAxis === "length" ? "selected" : ""}>沿柜长</option>
+                  <option value="width" ${row.cylinderAxis === "width" ? "selected" : ""}>沿柜宽</option>
+                  <option value="height" ${row.cylinderAxis === "height" ? "selected" : ""}>竖放</option>
+                </select>
+              </div>
+            `
+          : `
+              <div class="dimension-input">
+                <input type="number" min="1" step="1" value="${numberValue(row.length, "")}" data-field="length" aria-label="包装长" />
+                <span>长</span>
+              </div>
+              <div class="dimension-input">
+                <input type="number" min="1" step="1" value="${numberValue(row.width, "")}" data-field="width" aria-label="包装宽" />
+                <span>宽</span>
+              </div>
+              <div class="dimension-input">
+                <input type="number" min="1" step="1" value="${numberValue(row.height, "")}" data-field="height" aria-label="包装高" />
+                <span>高</span>
+              </div>
+              <div class="dimension-input">
+                <input type="number" min="0" step="0.01" value="${numberValue(row.weight, "")}" data-field="weight" aria-label="单件重量" />
+                <span>kg</span>
+              </div>
+            `;
         return `
           <article class="cargo-row" data-index="${index}" style="--row-color:${color}">
             <div class="cargo-row-head">
@@ -262,47 +330,81 @@
               </button>
             </div>
             <div class="cargo-grid">
-              <label class="field field-name">
-                <span>货号 / 名称</span>
-                <input type="text" value="${escapeHtml(row.name)}" data-field="name" aria-label="货号或名称" />
-              </label>
+              <div class="cargo-name-grid">
+                <label class="field field-name">
+                  <span>货号 / 名称</span>
+                  <input type="text" value="${escapeHtml(row.name)}" data-field="name" aria-label="货号或名称" />
+                </label>
+                <label class="field field-package-type">
+                  <span>包装类型</span>
+                  <select data-field="packageType" aria-label="包装类型">
+                    <option value="carton" ${row.packageType === "carton" ? "selected" : ""}>纸箱</option>
+                    <option value="wooden" ${row.packageType === "wooden" ? "selected" : ""}>木箱</option>
+                    <option value="bundle" ${row.packageType === "bundle" ? "selected" : ""}>捆包</option>
+                    <option value="pallet" ${row.packageType === "pallet" ? "selected" : ""}>托盘</option>
+                    <option value="cylinder" ${row.packageType === "cylinder" ? "selected" : ""}>圆柱 / 圆管</option>
+                    <option value="irregular" ${row.packageType === "irregular" ? "selected" : ""}>异形 / 其他</option>
+                  </select>
+                </label>
+              </div>
               <label class="field field-dimensions">
-                <span>纸箱外尺寸 <em>mm</em></span>
+                <span>${isCylinder ? "圆柱直径 / 长度" : "包装外尺寸"} <em>mm</em></span>
                 <div class="dimension-inputs">
-                  <div class="dimension-input">
-                    <input type="number" min="1" step="1" value="${numberValue(row.length, "")}" data-field="length" aria-label="纸箱长" />
-                    <span>长</span>
-                  </div>
-                  <div class="dimension-input">
-                    <input type="number" min="1" step="1" value="${numberValue(row.width, "")}" data-field="width" aria-label="纸箱宽" />
-                    <span>宽</span>
-                  </div>
-                  <div class="dimension-input">
-                    <input type="number" min="1" step="1" value="${numberValue(row.height, "")}" data-field="height" aria-label="纸箱高" />
-                    <span>高</span>
-                  </div>
-                  <div class="dimension-input">
-                    <input type="number" min="0" step="0.01" value="${numberValue(row.weight, "")}" data-field="weight" aria-label="单件重量" />
-                    <span>kg</span>
-                  </div>
+                  ${dimensions}
                 </div>
               </label>
               <div class="field field-flags">
                 <label class="mini-field">
                   <span>数量 / 件</span>
-                  <input class="mini-input" type="number" min="1" step="1" value="${numberValue(row.quantity, "")}" data-field="quantity" aria-label="纸箱数量" />
+                  <input class="mini-input" type="number" min="1" step="1" value="${numberValue(row.quantity, "")}" data-field="quantity" aria-label="包装数量" />
                 </label>
                 <label class="mini-field">
-                  <span>旋转规则</span>
-                  <select data-field="rotation" aria-label="旋转规则">
-                    <option value="all" ${row.rotation === "all" ? "selected" : ""}>可全向翻转</option>
-                    <option value="upright" ${row.rotation === "upright" ? "selected" : ""}>只可水平旋转</option>
-                    <option value="fixed" ${row.rotation === "fixed" ? "selected" : ""}>不可旋转</option>
+                  <span>安全余量 / 边</span>
+                  <input class="mini-input" type="number" min="0" step="1" value="${numberValue(row.clearance, 0)}" data-field="clearance" aria-label="单边安全余量" />
+                </label>
+                ${
+                  isCylinder
+                    ? ""
+                    : `
+                      <label class="mini-field">
+                        <span>旋转规则</span>
+                        <select data-field="rotation" aria-label="旋转规则">
+                          <option value="all" ${row.rotation === "all" ? "selected" : ""}>可全向翻转</option>
+                          <option value="upright" ${row.rotation === "upright" ? "selected" : ""}>只可水平旋转</option>
+                          <option value="fixed" ${row.rotation === "fixed" ? "selected" : ""}>不可旋转</option>
+                        </select>
+                      </label>
+                    `
+                }
+                <label class="mini-field">
+                  <span>顶部可承重 kg</span>
+                  <input class="mini-input" type="number" min="0" step="1" value="${numberValue(row.topLoadKg, 0)}" data-field="topLoadKg" aria-label="顶部最大承重" />
+                </label>
+                ${
+                  hasWoodenBase
+                    ? `
+                      <label class="mini-field">
+                        <span>底座高度 mm</span>
+                        <input class="mini-input" type="number" min="0" step="1" value="${numberValue(row.baseHeight, 100)}" data-field="baseHeight" aria-label="木箱底座高度" />
+                      </label>
+                      <label class="stack-toggle mini-field">
+                        <input type="checkbox" data-field="dimensionsIncludeBase" ${row.dimensionsIncludeBase !== false ? "checked" : ""} />
+                        <span>录入总高已含底座</span>
+                      </label>
+                    `
+                    : ""
+                }
+                <label class="mini-field">
+                  <span>底部支撑要求</span>
+                  <select data-field="supportRequired" aria-label="底部支撑要求">
+                    <option value="1" ${numberValue(row.supportRequired, 1) === 1 ? "selected" : ""}>必须完全支撑</option>
+                    <option value="0.9" ${numberValue(row.supportRequired, 1) === 0.9 ? "selected" : ""}>至少 90%</option>
+                    <option value="0.8" ${numberValue(row.supportRequired, 1) === 0.8 ? "selected" : ""}>至少 80%</option>
                   </select>
                 </label>
                 <label class="stack-toggle mini-field" style="grid-column:1 / -1">
-                  <input type="checkbox" data-field="stackable" ${row.stackable !== false ? "checked" : ""} />
-                  <span>允许在上方继续叠放</span>
+                  <input type="checkbox" data-field="onlyBottom" ${row.onlyBottom ? "checked" : ""} />
+                  <span>此包装只允许放在柜底</span>
                 </label>
               </div>
             </div>
@@ -322,10 +424,18 @@
     );
     const cbm = state.rows.reduce((sum, row) => {
       const cartonCbm =
-        (numberValue(row.length, 0) *
-          numberValue(row.width, 0) *
-          numberValue(row.height, 0)) /
-        1000000000;
+        row.packageType === "cylinder"
+          ? (Math.PI *
+              (numberValue(row.diameter, 0) / 2) ** 2 *
+              numberValue(row.cylinderLength, 0)) /
+            1000000000
+          : (numberValue(row.length, 0) *
+              numberValue(row.width, 0) *
+              (numberValue(row.height, 0) +
+                (row.dimensionsIncludeBase === false
+                  ? numberValue(row.baseHeight, 0)
+                  : 0))) /
+            1000000000;
       return sum + cartonCbm * Math.max(0, numberValue(row.quantity, 0));
     }, 0);
     elements.cargoEstimate.textContent = `${formatInteger(quantity)} 件 / ${formatNumber(
@@ -348,9 +458,23 @@
       return;
     }
 
-    if (field === "stackable") {
+    if (["onlyBottom", "dimensionsIncludeBase"].includes(field)) {
       row[field] = input.checked;
-    } else if (["length", "width", "height", "weight", "quantity"].includes(field)) {
+    } else if (
+      [
+        "length",
+        "width",
+        "height",
+        "diameter",
+        "cylinderLength",
+        "clearance",
+        "baseHeight",
+        "weight",
+        "topLoadKg",
+        "quantity",
+        "supportRequired",
+      ].includes(field)
+    ) {
       row[field] = input.value;
     } else {
       row[field] = input.value;
@@ -361,6 +485,30 @@
       if (heading) {
         heading.textContent = row.name || `货物 ${index + 1}`;
       }
+    }
+
+    if (field === "packageType") {
+      if (row.packageType === "cylinder") {
+        row.diameter =
+          numberValue(row.diameter, 0) ||
+          Math.max(numberValue(row.width, 0), numberValue(row.height, 0));
+        row.cylinderLength =
+          numberValue(row.cylinderLength, 0) || numberValue(row.length, 0);
+      } else {
+        row.length = numberValue(row.length, 0) || row.cylinderLength;
+        row.width = numberValue(row.width, 0) || row.diameter;
+        row.height = numberValue(row.height, 0) || row.diameter;
+      }
+      if (["wooden", "pallet"].includes(row.packageType)) {
+        row.baseHeight = numberValue(row.baseHeight, 0) || 100;
+        row.dimensionsIncludeBase =
+          row.dimensionsIncludeBase !== false;
+      } else {
+        row.baseHeight = 0;
+      }
+      renderCargoRows();
+      saveState();
+      return;
     }
 
     updateEstimate();
@@ -425,6 +573,18 @@
       length: numberValue(elements.containerLength.value, 0),
       height: numberValue(elements.containerHeight.value, 0),
       payload: numberValue(elements.containerPayload.value, 0),
+      longCargoWidthColumns: numberValue(
+        elements.longCargoWidthColumns.value,
+        0
+      ),
+      longCargoLengthPositions: numberValue(
+        elements.longCargoLengthPositions.value,
+        0
+      ),
+      longCargoMaxLayers: numberValue(
+        elements.longCargoMaxLayers.value,
+        0
+      ),
     };
     elements.containerSelect.value = "custom";
     elements.containerState.textContent = "自定义";
@@ -436,12 +596,22 @@
       id: row.id || `row-${index + 1}`,
       sku: row.sku || "",
       name: row.name || `货物 ${index + 1}`,
+      packageType: row.packageType || "carton",
+      shape: row.packageType === "cylinder" ? "cylinder" : "box",
       length: numberValue(row.length, 0),
       width: numberValue(row.width, 0),
       height: numberValue(row.height, 0),
+      diameter: numberValue(row.diameter, 0),
+      cylinderLength: numberValue(row.cylinderLength, 0),
+      cylinderAxis: row.cylinderAxis || "length",
+      clearance: numberValue(row.clearance, 0),
+      baseHeight: numberValue(row.baseHeight, 0),
+      dimensionsIncludeBase: row.dimensionsIncludeBase !== false,
       weight: numberValue(row.weight, 0),
+      topLoadKg: numberValue(row.topLoadKg, 0),
+      supportRequired: numberValue(row.supportRequired, 1),
+      onlyBottom: Boolean(row.onlyBottom),
       quantity: numberValue(row.quantity, 0),
-      stackable: row.stackable !== false,
       rotation: row.rotation || "all",
       colorIndex: index % COLORS.length,
     }));
@@ -575,7 +745,7 @@
             <i class="color-dot" style="background:${color}"></i>
             <div class="load-list-copy">
               <strong>${escapeHtml(entry.name)}</strong>
-              <span>${escapeHtml(entry.orientation)}</span>
+              <span>${escapeHtml(entry.orientation)} · ${escapeHtml(entry.supportDescription)}</span>
             </div>
             <div class="load-list-count">
               <strong>${formatInteger(entry.count)} 件</strong>
@@ -604,6 +774,7 @@
             </td>
             <td>${formatInteger(entry.count)}</td>
             <td>${escapeHtml(entry.orientation)}</td>
+            <td>${escapeHtml(entry.supportDescription)}</td>
             <td>${formatNumber(entry.cbm, 3)} CBM</td>
             <td>${formatNumber(entry.weight, 1)} kg</td>
           </tr>
@@ -931,7 +1102,49 @@
       visiblePlacements.forEach((placement, index) => {
         const color =
           COLORS[placement.colorIndex % COLORS.length] || COLORS[index % COLORS.length];
-        this.createBoxFaces(placement, color, template, fitScale, faces);
+        if (placement.shape === "cylinder") {
+          this.createCylinderFaces(
+            placement,
+            color,
+            template,
+            fitScale,
+            faces
+          );
+        } else if (
+          Number(placement.baseHeight) > 0 &&
+          placement.baseHeight < placement.dz
+        ) {
+          const baseHeight = Math.max(0, Number(placement.baseHeight));
+          const mainHeight = placement.dz - baseHeight;
+          if (baseHeight > 0.01) {
+            this.createBoxFaces(
+              {
+                ...placement,
+                z: placement.z,
+                dz: baseHeight,
+              },
+              "#6f5439",
+              template,
+              fitScale,
+              faces
+            );
+          }
+          if (mainHeight > 0.01) {
+            this.createBoxFaces(
+              {
+                ...placement,
+                z: placement.z + baseHeight,
+                dz: mainHeight,
+              },
+              color,
+              template,
+              fitScale,
+              faces
+            );
+          }
+        } else {
+          this.createBoxFaces(placement, color, template, fitScale, faces);
+        }
       });
 
       faces.sort((a, b) => b.depth - a.depth);
@@ -999,6 +1212,122 @@
           depth:
             projected.reduce((sum, point) => sum + point.depth, 0) /
             projected.length,
+        });
+      });
+    }
+
+    createCylinderFaces(cylinder, color, template, fitScale, output) {
+      const axis = cylinder.cylinderAxis || "length";
+      const diameter = Math.max(
+        1,
+        Number(cylinder.diameter) ||
+          Math.min(cylinder.dx, cylinder.dy, cylinder.dz)
+      );
+      const radius = diameter / 2;
+      const length = Math.max(
+        1,
+        Number(cylinder.cylinderLength) ||
+          (axis === "width"
+            ? cylinder.dx
+            : axis === "height"
+              ? cylinder.dz
+              : cylinder.dy)
+      );
+      const centerX = cylinder.x + cylinder.dx / 2;
+      const centerY = cylinder.y + cylinder.dy / 2;
+      const centerZ = cylinder.z + cylinder.dz / 2;
+      const segments = 16;
+      const ringA = [];
+      const ringB = [];
+      const p = (x, y, z) =>
+        this.projectPoint({ x, y, z }, template, fitScale);
+
+      for (let index = 0; index < segments; index += 1) {
+        const angle = (Math.PI * 2 * index) / segments;
+        const cosine = Math.cos(angle);
+        const sine = Math.sin(angle);
+
+        if (axis === "width") {
+          ringA.push(
+            p(
+              cylinder.x + (cylinder.dx - length) / 2,
+              centerY + radius * cosine,
+              centerZ + radius * sine
+            )
+          );
+          ringB.push(
+            p(
+              cylinder.x + (cylinder.dx + length) / 2,
+              centerY + radius * cosine,
+              centerZ + radius * sine
+            )
+          );
+        } else if (axis === "height") {
+          ringA.push(
+            p(
+              centerX + radius * cosine,
+              centerY + radius * sine,
+              cylinder.z + (cylinder.dz - length) / 2
+            )
+          );
+          ringB.push(
+            p(
+              centerX + radius * cosine,
+              centerY + radius * sine,
+              cylinder.z + (cylinder.dz + length) / 2
+            )
+          );
+        } else {
+          ringA.push(
+            p(
+              centerX + radius * cosine,
+              cylinder.y + (cylinder.dy - length) / 2,
+              centerZ + radius * sine
+            )
+          );
+          ringB.push(
+            p(
+              centerX + radius * cosine,
+              cylinder.y + (cylinder.dy + length) / 2,
+              centerZ + radius * sine
+            )
+          );
+        }
+      }
+
+      for (let index = 0; index < segments; index += 1) {
+        const nextIndex = (index + 1) % segments;
+        const side = [
+          ringA[index],
+          ringA[nextIndex],
+          ringB[nextIndex],
+          ringB[index],
+        ];
+        const shade =
+          0.78 +
+          0.22 *
+            Math.max(
+              0,
+              Math.cos((Math.PI * 2 * (index + 0.5)) / segments - 0.7)
+            );
+        output.push({
+          points: side,
+          color: shadeColor(color, shade),
+          depth:
+            side.reduce((sum, point) => sum + point.depth, 0) / side.length,
+        });
+      }
+
+      [
+        { points: [...ringA].reverse(), shade: 0.9 },
+        { points: ringB, shade: 1.12 },
+      ].forEach((cap) => {
+        output.push({
+          points: cap.points,
+          color: shadeColor(color, cap.shade),
+          depth:
+            cap.points.reduce((sum, point) => sum + point.depth, 0) /
+            cap.points.length,
         });
       });
     }
@@ -1093,6 +1422,9 @@
       elements.containerLength,
       elements.containerHeight,
       elements.containerPayload,
+      elements.longCargoWidthColumns,
+      elements.longCargoLengthPositions,
+      elements.longCargoMaxLayers,
     ].forEach((input) => input.addEventListener("input", handleContainerInput));
     elements.cargoRows.addEventListener("input", handleCargoInput);
     elements.cargoRows.addEventListener("change", handleCargoInput);

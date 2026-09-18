@@ -16,7 +16,7 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon-192.png" type="image/png" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=5" />
   </head>
   <body>
     <div class="app-shell">
@@ -103,6 +103,21 @@
                 <input id="containerPayload" type="number" min="0" step="1" value="28600" />
               </label>
             </div>
+            <div class="long-cargo-grid">
+              <label class="field">
+                <span>长管宽向列数 <em>列</em></span>
+                <input id="longCargoWidthColumns" type="number" min="0" step="1" value="1" />
+              </label>
+              <label class="field">
+                <span>长管柜长位置 <em>位</em></span>
+                <input id="longCargoLengthPositions" type="number" min="0" step="1" value="1" />
+              </label>
+              <label class="field">
+                <span>长管最多叠层 <em>层</em></span>
+                <input id="longCargoMaxLayers" type="number" min="0" step="1" value="3" />
+              </label>
+            </div>
+            <p class="container-hint">20GP 长管参数为 0，表示不能装载 5.5 米以上长件。</p>
           </section>
 
           <section class="input-section cargo-section">
@@ -267,6 +282,7 @@
                       <th>货号 / 名称</th>
                       <th>件数</th>
                       <th>推荐摆法 (长 × 宽 × 高)</th>
+                      <th>叠放依据</th>
                       <th>体积</th>
                       <th>重量</th>
                     </tr>
@@ -281,6 +297,8 @@
               <p>
                 按纸箱外尺寸、柜内净空和最大载重计算；尺寸单位均为
                 mm，重量单位为 kg。结果已考虑旋转和叠放规则，未计入托盘、绑扎、柜门内凸、装卸间隙及货物受压限制。
+                叠放前会校验底部支撑比例和下方包装的顶部承重；未填写“顶部可承重”的包装默认不允许被压。
+                木箱默认带 100 mm 底座；如录入总高不含底座，计算会自动补足。
               </p>
             </section>
           </div>
@@ -291,7 +309,7 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="./packing.js"></script>
-    <script src="./app.js"></script>
+    <script src="./packing.js?v=5"></script>
+    <script src="./app.js?v=5"></script>
   </body>
 </html>
