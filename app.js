@@ -50,6 +50,7 @@
     longCargoMaxLayers: document.querySelector(
       "#longCargoMaxLayers"
     ),
+    longCargoAllowed: document.querySelector("#longCargoAllowed"),
     containerState: document.querySelector("#containerState"),
     cargoRows: document.querySelector("#cargoRows"),
     cargoCount: document.querySelector("#cargoCount"),
@@ -180,13 +181,17 @@
       if (!saved || !Array.isArray(saved.rows) || !saved.rows.length) {
         return fallback;
       }
+      const savedContainer = {
+        ...fallback.container,
+        ...saved.container,
+      };
+      if (CONTAINERS[savedContainer.id]) {
+        Object.assign(savedContainer, CONTAINERS[savedContainer.id]);
+      }
       return {
         ...fallback,
         ...saved,
-        container: {
-          ...fallback.container,
-          ...saved.container,
-        },
+        container: savedContainer,
         result: null,
       };
     } catch {
@@ -264,6 +269,8 @@
       state.container.longCargoLengthPositions ?? 0;
     elements.longCargoMaxLayers.value =
       state.container.longCargoMaxLayers ?? 0;
+    elements.longCargoAllowed.checked =
+      state.container.longCargoAllowed !== false;
     elements.containerState.textContent =
       state.container.id === "custom" ? "自定义" : state.container.name;
   }
@@ -585,6 +592,7 @@
         elements.longCargoMaxLayers.value,
         0
       ),
+      longCargoAllowed: elements.longCargoAllowed.checked,
     };
     elements.containerSelect.value = "custom";
     elements.containerState.textContent = "自定义";
@@ -1425,7 +1433,12 @@
       elements.longCargoWidthColumns,
       elements.longCargoLengthPositions,
       elements.longCargoMaxLayers,
+      elements.longCargoAllowed,
     ].forEach((input) => input.addEventListener("input", handleContainerInput));
+    elements.longCargoAllowed.addEventListener(
+      "change",
+      handleContainerInput
+    );
     elements.cargoRows.addEventListener("input", handleCargoInput);
     elements.cargoRows.addEventListener("change", handleCargoInput);
     elements.cargoRows.addEventListener("click", handleCargoClick);

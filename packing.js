@@ -18,6 +18,7 @@
       length: 5898,
       height: 2393,
       payload: 28200,
+      longCargoAllowed: false,
       longCargoWidthColumns: 0,
       longCargoLengthPositions: 0,
       longCargoMaxLayers: 0,
@@ -30,7 +31,8 @@
       length: 12032,
       height: 2393,
       payload: 28800,
-      longCargoWidthColumns: 1,
+      longCargoAllowed: true,
+      longCargoWidthColumns: 0,
       longCargoLengthPositions: 1,
       longCargoMaxLayers: 3,
     },
@@ -42,7 +44,8 @@
       length: 12032,
       height: 2698,
       payload: 28600,
-      longCargoWidthColumns: 1,
+      longCargoAllowed: true,
+      longCargoWidthColumns: 0,
       longCargoLengthPositions: 1,
       longCargoMaxLayers: 3,
     },
@@ -54,7 +57,8 @@
       length: 13556,
       height: 2698,
       payload: 27600,
-      longCargoWidthColumns: 1,
+      longCargoAllowed: true,
+      longCargoWidthColumns: 0,
       longCargoLengthPositions: 1,
       longCargoMaxLayers: 3,
     },
@@ -358,7 +362,8 @@
 
     if (
       longCargo &&
-      (container.longCargoWidthColumns <= 0 ||
+      (container.longCargoAllowed === false ||
+        container.longCargoLengthPositions <= 0 ||
         container.longCargoMaxLayers <= 0)
     ) {
       return null;
@@ -368,14 +373,16 @@
       const capacity = countFits(space, orientation);
       let layers = capacity.z;
       if (longCargo) {
-        capacity.x = Math.min(
-          capacity.x,
-          Math.max(1, Number(container.longCargoWidthColumns) || 1)
-        );
         capacity.y = Math.min(
           capacity.y,
           Math.max(1, Number(container.longCargoLengthPositions) || 1)
         );
+        if (Number(container.longCargoWidthColumns) > 0) {
+          capacity.x = Math.min(
+            capacity.x,
+            Number(container.longCargoWidthColumns)
+          );
+        }
         layers = Math.min(
           layers,
           Math.max(1, Number(container.longCargoMaxLayers) || 1)
@@ -914,11 +921,6 @@
     let placedWeight = 0;
     let loadById = {};
     let longLane = null;
-    let longPlacedCount = 0;
-    const maxLongUnits =
-      Math.max(0, Number(container.longCargoWidthColumns) || 0) *
-      Math.max(0, Number(container.longCargoLengthPositions) || 0) *
-      Math.max(0, Number(container.longCargoMaxLayers) || 0);
 
     while (spaces.length) {
       const candidates = [];
@@ -938,23 +940,41 @@
           );
           if (candidate) {
             const longCargo = isLongCargo(item, container);
-            if (longCargo) {
-              const remainingLongSlots = maxLongUnits - longPlacedCount;
-              if (remainingLongSlots < 1) {
-                continue;
-              }
-              candidate.count = Math.min(
-                candidate.count,
-                remainingLongSlots
-              );
-            }
             if (
               longCargo &&
               longLane &&
-              (Math.abs(candidate.space.x - longLane.x) > 0.01 ||
-                Math.abs(candidate.space.y - longLane.y) > 0.01)
+              Math.abs(candidate.space.y - longLane.y) > 0.01
             ) {
               continue;
+            }
+            if (longCargo && longLane && candidate.space.z > 0.01) {
+              const layersByX = new Map();
+              placements
+                .filter(
+                  (placement) =>
+                    isLongCargo(itemsById[placement.itemId], container) &&
+                    Math.abs(placement.y - longLane.y) <= 0.01
+                )
+                .forEach((placement) => {
+                  const key = Math.round(placement.x * 1000) / 1000;
+                  if (!layersByX.has(key)) {
+                    layersByX.set(key, new Set());
+                  }
+                  layersByX
+                    .get(key)
+                    .add(Math.round(placement.z * 1000) / 1000);
+                });
+              const candidateRight =
+                candidate.space.x + candidate.space.dx;
+              const hasFullColumn = Array.from(layersByX.entries()).some(
+                ([x, layers]) =>
+                  x < candidateRight - 0.01 &&
+                  x + 0.01 > candidate.space.x &&
+                  layers.size >= container.longCargoMaxLayers
+              );
+              if (hasFullColumn) {
+                continue;
+              }
             }
             const generated = createGridPlacements(
               candidate.item,
@@ -990,13 +1010,8 @@
       if (isLongCargo(selected.item, container) && !longLane) {
         const firstLongPlacement = generated.placements[0];
         longLane = {
-          x: firstLongPlacement.x,
           y: firstLongPlacement.y,
-          width: firstLongPlacement.dx,
         };
-      }
-      if (isLongCargo(selected.item, container)) {
-        longPlacedCount += generated.placements.length;
       }
 
       placements.push(...generated.placements);
@@ -1226,7 +1241,7 @@
       }
       if (
         isLongCargo(item, container) &&
-        (container.longCargoWidthColumns <= 0 ||
+        (container.longCargoAllowed === false ||
           container.longCargoLengthPositions <= 0 ||
           container.longCargoMaxLayers <= 0)
       ) {

@@ -338,6 +338,12 @@ svg {
   line-height: 1.5;
 }
 
+.long-cargo-toggle {
+  width: 100%;
+  margin-top: 10px;
+  border-style: dashed;
+}
+
 .cargo-section {
   padding-bottom: 16px;
   background: #fbfcfd;

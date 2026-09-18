@@ -16,7 +16,7 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon-192.png" type="image/png" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=5" />
+    <link rel="stylesheet" href="./styles.css?v=8" />
   </head>
   <body>
     <div class="app-shell">
@@ -105,8 +105,8 @@
             </div>
             <div class="long-cargo-grid">
               <label class="field">
-                <span>长管宽向列数 <em>列</em></span>
-                <input id="longCargoWidthColumns" type="number" min="0" step="1" value="1" />
+                <span>长管宽向列数 <em>0=自动</em></span>
+                <input id="longCargoWidthColumns" type="number" min="0" step="1" value="0" />
               </label>
               <label class="field">
                 <span>长管柜长位置 <em>位</em></span>
@@ -117,7 +117,11 @@
                 <input id="longCargoMaxLayers" type="number" min="0" step="1" value="3" />
               </label>
             </div>
-            <p class="container-hint">20GP 长管参数为 0，表示不能装载 5.5 米以上长件。</p>
+            <label class="stack-toggle long-cargo-toggle">
+              <input id="longCargoAllowed" type="checkbox" />
+              <span>允许装载 5.5 米以上长管件</span>
+            </label>
+            <p class="container-hint">宽向列数 0 表示按柜宽自动计算；关闭允许开关后，长管件不能装入。</p>
           </section>
 
           <section class="input-section cargo-section">
@@ -309,7 +313,7 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="./packing.js?v=5"></script>
-    <script src="./app.js?v=5"></script>
+    <script src="./packing.js?v=8"></script>
+    <script src="./app.js?v=8"></script>
   </body>
 </html>
