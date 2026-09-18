@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="外贸纸箱装柜计算与柜内摆放示意工具"
+    />
+    <meta name="theme-color" content="#17222f" />
+    <meta name="application-name" content="柜满载" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="柜满载" />
+    <title>柜满载 - 外贸装柜计算器</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="brand-copy">
+            <strong>柜满载</strong>
+            <span>外贸装柜计算器</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button class="button button-quiet" id="installButton" type="button" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4v10m0 0 4-4m-4 4-4-4M5 18v2h14v-2" />
+            </svg>
+            安装应用
+          </button>
+          <button class="button button-quiet" id="shareButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 12h8M14 8l4 4-4 4M7 7H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+            </svg>
+            分享方案
+          </button>
+          <button class="button button-quiet" id="exportButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 15v4h14v-4" />
+            </svg>
+            导出报告
+          </button>
+          <button class="button button-quiet" id="printButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 8V4h10v4M7 17H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M7 14h10v6H7z" />
+            </svg>
+            打印
+          </button>
+          <button class="button button-quiet button-icon" id="resetButton" type="button" title="恢复初始数据" aria-label="恢复初始数据">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 4v6h6M20 20v-6h-6M5.5 15a7 7 0 0 0 11.9 2.5L20 14M4 10l2.6-3.5A7 7 0 0 1 18.5 9" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="control-rail">
+          <section class="input-section">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">01 / 柜型</span>
+                <h2>集装箱参数</h2>
+              </div>
+              <span class="section-state" id="containerState">40HQ</span>
+            </div>
+
+            <label class="field field-wide">
+              <span>柜型</span>
+              <select id="containerSelect">
+                <option value="20GP">20GP 标准柜</option>
+                <option value="40GP">40GP 标准柜</option>
+                <option value="40HQ" selected>40HQ 高柜</option>
+                <option value="45HQ">45HQ 高柜</option>
+                <option value="custom">自定义内尺寸</option>
+              </select>
+            </label>
+
+            <div class="field-grid container-fields">
+              <label class="field">
+                <span>柜内宽 <em>mm</em></span>
+                <input id="containerWidth" type="number" min="1" step="1" value="2352" />
+              </label>
+              <label class="field">
+                <span>柜内长 <em>mm</em></span>
+                <input id="containerLength" type="number" min="1" step="1" value="12032" />
+              </label>
+              <label class="field">
+                <span>柜内高 <em>mm</em></span>
+                <input id="containerHeight" type="number" min="1" step="1" value="2698" />
+              </label>
+              <label class="field">
+                <span>最大载重 <em>kg</em></span>
+                <input id="containerPayload" type="number" min="0" step="1" value="28600" />
+              </label>
+            </div>
+          </section>
+
+          <section class="input-section cargo-section">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">02 / 货物</span>
+                <h2>纸箱清单</h2>
+              </div>
+              <span class="section-state" id="cargoCount">1 项</span>
+            </div>
+
+            <div class="cargo-head" aria-hidden="true">
+              <span>货物</span>
+              <span>尺寸 / 单件重量</span>
+              <span>数量 / 规则</span>
+            </div>
+            <div id="cargoRows" class="cargo-rows"></div>
+
+            <button class="add-cargo-button" id="addCargoButton" type="button">
+              <span class="plus-mark">+</span>
+              添加一项货物
+            </button>
+          </section>
+
+          <div class="calculate-bar">
+            <div class="estimate">
+              <span>合计</span>
+              <strong id="cargoEstimate">0 件 / 0.000 CBM</strong>
+            </div>
+            <button class="button button-primary" id="calculateButton" type="button">
+              开始计算
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </button>
+          </div>
+        </aside>
+
+        <section class="result-area">
+          <div class="empty-state" id="emptyState">
+            <div class="empty-illustration" aria-hidden="true">
+              <div class="empty-container">
+                <span></span><span></span><span></span><span></span>
+              </div>
+            </div>
+            <span class="eyebrow">装柜结果</span>
+            <h1>让每一柜装得更清楚</h1>
+            <p>填写左侧纸箱数据后开始计算。</p>
+          </div>
+
+          <div class="result-content" id="resultContent" hidden>
+            <div class="result-header">
+              <div>
+                <span class="eyebrow">装柜方案</span>
+                <h1 id="resultTitle">40HQ 装柜结果</h1>
+              </div>
+              <div class="result-badge" id="resultBadge">计算完成</div>
+            </div>
+
+            <div class="metric-grid">
+              <div class="metric">
+                <span>建议柜数</span>
+                <strong id="metricContainers">0</strong>
+                <small id="metricContainersHint">全部可装</small>
+              </div>
+              <div class="metric">
+                <span>装载件数</span>
+                <strong id="metricUnits">0</strong>
+                <small id="metricUnitsHint">0 项货物</small>
+              </div>
+              <div class="metric metric-progress">
+                <span>总体积</span>
+                <strong id="metricVolume">0.000 <em>CBM</em></strong>
+                <div class="progress-track"><i id="volumeProgress"></i></div>
+                <small id="metricVolumeHint">平均容积率 0%</small>
+              </div>
+              <div class="metric metric-progress">
+                <span>总重量</span>
+                <strong id="metricWeight">0 <em>kg</em></strong>
+                <div class="progress-track progress-weight"><i id="weightProgress"></i></div>
+                <small id="metricWeightHint">平均载重率 0%</small>
+              </div>
+            </div>
+
+            <div class="result-tabs-wrap">
+              <div class="result-tabs" id="containerTabs" role="tablist"></div>
+            </div>
+
+            <div class="visual-layout">
+              <section class="visual-panel">
+                <div class="panel-toolbar">
+                  <div>
+                    <span class="eyebrow">柜内示意</span>
+                    <h2 id="visualTitle">第 1 柜</h2>
+                  </div>
+                  <div class="toolbar-actions">
+                    <button class="icon-button" id="viewResetButton" type="button" title="恢复视角" aria-label="恢复视角">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v5h5" />
+                      </svg>
+                    </button>
+                    <button class="icon-button" id="fullscreenButton" type="button" title="全屏查看" aria-label="全屏查看">
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="canvas-wrap" id="canvasWrap">
+                  <canvas id="loadingCanvas" aria-label="集装箱内货物摆放三维示意"></canvas>
+                  <div class="canvas-help">
+                    <span>拖动旋转</span>
+                    <span>滚轮缩放</span>
+                    <span id="viewAngle">视角 -42° / 24°</span>
+                  </div>
+                  <div class="view-switch" id="viewSwitch" aria-label="视角模式">
+                    <button type="button" data-view="iso" class="active">立体</button>
+                    <button type="button" data-view="front">正视</button>
+                    <button type="button" data-view="top">俯视</button>
+                  </div>
+                </div>
+              </section>
+
+              <aside class="load-summary">
+                <div class="panel-toolbar compact">
+                  <div>
+                    <span class="eyebrow">装载明细</span>
+                    <h2 id="summaryTitle">第 1 柜明细</h2>
+                  </div>
+                </div>
+                <div class="summary-stat-row">
+                  <div>
+                    <span>装载件数</span>
+                    <strong id="containerUnits">0</strong>
+                  </div>
+                  <div>
+                    <span>容积率</span>
+                    <strong id="containerVolumeRate">0%</strong>
+                  </div>
+                  <div>
+                    <span>载重率</span>
+                    <strong id="containerWeightRate">0%</strong>
+                  </div>
+                </div>
+                <div class="container-load-list" id="containerLoadList"></div>
+              </aside>
+            </div>
+
+            <section class="detail-section">
+              <div class="panel-toolbar">
+                <div>
+                  <span class="eyebrow">方案数据</span>
+                  <h2>装载清单</h2>
+                </div>
+                <span class="soft-label" id="detailScope">当前柜</span>
+              </div>
+              <div class="table-scroll">
+                <table class="load-table">
+                  <thead>
+                    <tr>
+                      <th>柜号</th>
+                      <th>货号 / 名称</th>
+                      <th>件数</th>
+                      <th>推荐摆法 (长 × 宽 × 高)</th>
+                      <th>体积</th>
+                      <th>重量</th>
+                    </tr>
+                  </thead>
+                  <tbody id="loadTableBody"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="assumption-note">
+              <strong>计算口径</strong>
+              <p>
+                按纸箱外尺寸、柜内净空和最大载重计算；尺寸单位均为
+                mm，重量单位为 kg。结果已考虑旋转和叠放规则，未计入托盘、绑扎、柜门内凸、装卸间隙及货物受压限制。
+              </p>
+            </section>
+          </div>
+
+          <div class="result-error" id="resultError" hidden></div>
+        </section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./packing.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
