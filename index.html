@@ -85,6 +85,14 @@
               </select>
             </label>
 
+            <label class="field field-wide">
+              <span>装柜方式</span>
+              <select id="planMode">
+                <option value="single" selected>单一柜型（自动追加同型柜）</option>
+                <option value="mix">混柜：大柜 + 小柜</option>
+              </select>
+            </label>
+
             <div class="field-grid container-fields">
               <label class="field">
                 <span>柜内宽 <em>mm</em></span>
@@ -102,6 +110,36 @@
                 <span>最大载重 <em>kg</em></span>
                 <input id="containerPayload" type="number" min="0" step="1" value="28600" />
               </label>
+            </div>
+            <div class="field-grid" id="mixFields" hidden>
+              <label class="field">
+                <span>大柜数量</span>
+                <input id="mixBigCount" type="number" min="1" max="6" step="1" value="2" />
+              </label>
+              <label class="field">
+                <span>小柜内宽 <em>mm</em></span>
+                <input id="smallWidth" type="number" min="1" step="1" value="2300" />
+              </label>
+              <label class="field">
+                <span>小柜内长 <em>mm</em></span>
+                <input id="smallLength" type="number" min="1" step="1" value="5850" />
+              </label>
+              <label class="field">
+                <span>小柜内高 <em>mm</em></span>
+                <input id="smallHeight" type="number" min="1" step="1" value="2200" />
+              </label>
+              <label class="field">
+                <span>小柜最大载重 <em>kg</em></span>
+                <input id="smallPayload" type="number" min="0" step="1" value="28200" />
+              </label>
+              <label class="stack-toggle">
+                <input id="autoGroupInput" type="checkbox" checked />
+                <span>自动组合上下层包装</span>
+              </label>
+              <p class="container-hint" style="grid-column: 1 / -1; margin: 0">
+                上方尺寸为大柜；先装满组合柜，再把剩余货物依次排入后续柜。
+                勾选自动组合后，标注“上面”的包装会与其下方同高托盘成对承托。
+              </p>
             </div>
             <div class="long-cargo-grid">
               <label class="field">
@@ -474,7 +512,7 @@ A002	纸箱B	800	600	500	120	25"></textarea>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./xlsx.full.min.js"></script>
-    <script src="./packing.js?v=15"></script>
-    <script src="./app.js?v=15"></script>
+    <script src="./packing.js?v=20"></script>
+    <script src="./app.js?v=20"></script>
   </body>
 </html>
