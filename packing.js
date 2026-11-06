@@ -364,6 +364,50 @@
     return dedupeAndPruneSpaces(next);
   }
 
+  function supportedCandidateSpaces(spaces, placements, itemsById, container) {
+    if (container.allowStacking === false || !placements.length) {
+      return spaces;
+    }
+    const result = [];
+    const seen = new Set();
+    const add = (space) => {
+      if (!isSpaceValid(space)) {
+        return;
+      }
+      const key = [space.x, space.y, space.z, space.dx, space.dy, space.dz]
+        .map((value) => round(value, 3))
+        .join("|");
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(space);
+      }
+    };
+    const supports = placements.filter(
+      (placement) => itemsById[placement.itemId].stackable !== false
+    );
+
+    for (const space of spaces) {
+      add(space);
+      for (const support of supports) {
+        const z = support.z + support.dz;
+        if (z < space.z - 0.01 || z >= space.z + space.dz - 0.01) {
+          continue;
+        }
+        const x = Math.max(space.x, support.x);
+        const y = Math.max(space.y, support.y);
+        const right = Math.min(space.x + space.dx, support.x + support.dx);
+        const front = Math.min(space.y + space.dy, support.y + support.dy);
+        if (right <= x + 0.01 || front <= y + 0.01) {
+          continue;
+        }
+        const height = space.z + space.dz - z;
+        add(createSpace(x, y, z, space.x + space.dx - x, space.y + space.dy - y, height));
+        add(createSpace(x, y, z, right - x, front - y, height));
+      }
+    }
+    return result;
+  }
+
   function countFits(space, orientation) {
     return {
       x: Math.floor((space.dx + 0.001) / orientation[0]),
@@ -472,8 +516,15 @@
     remainingCount,
     space,
     placedWeight,
-    container
+    container,
+    acceptCandidate = (candidate) => candidate
   ) {
+    if (
+      (item.onlyTop && space.z <= 0.01) ||
+      ((item.onlyBottom || container.allowStacking === false) && space.z > 0.01)
+    ) {
+      return null;
+    }
     const unitWeight = Math.max(0, Number(item.weight) || 0);
     let best = null;
     const longCargo = isLongCargo(item, container);
@@ -523,17 +574,11 @@
         Math.min(1, Number(item.supportRequired ?? 1))
       );
 
-      if (item.onlyBottom) {
-        if (space.z > 0.01) {
-          continue;
-        }
-      }
-
       if (
+        item.onlyBottom ||
         !stackingAllowed ||
         !itemStackable ||
-        (topLoadKg <= 0 &&
-          !(longCargo && container.longCargoMaxLayers > 1))
+        topLoadKg <= 0
       ) {
         layers = Math.min(layers, 1);
       }
@@ -547,21 +592,13 @@
         continue;
       }
 
-      const unitsPerLayer = capacity.x * capacity.y;
-      if (unitWeight > 0) {
-        const availableWeight = Math.max(0, container.payload - placedWeight);
-        const weightLayers = Math.floor(
-          (availableWeight + 0.0001) / (unitWeight * unitsPerLayer)
-        );
-        layers = Math.min(layers, weightLayers);
-      }
-
-      if (layers < 1) {
-        continue;
-      }
-
-      const capacityCount = capacity.x * capacity.y * layers;
-      const count = Math.min(capacityCount, remainingCount);
+      capacity.z = layers;
+      const availableWeight = Math.max(0, container.payload - placedWeight);
+      const weightCount = unitWeight > 0
+        ? Math.floor((availableWeight + 0.0001) / unitWeight)
+        : Infinity;
+      const capacityCount = capacity.x * capacity.y * capacity.z;
+      const count = Math.min(capacityCount, remainingCount, weightCount);
       if (count < 1) {
         continue;
       }
@@ -608,7 +645,10 @@
       };
 
       if (!best || candidate.score > best.score) {
-        best = candidate;
+        const accepted = acceptCandidate(candidate);
+        if (accepted) {
+          best = accepted;
+        }
       }
     }
 
@@ -665,29 +705,38 @@
   ) {
     const loadById = { ...existingLoadById };
     const allPlacements = [...existingPlacements];
+    const placementsById = new Map(
+      existingPlacements.map((placement) => [placement.placementId, placement])
+    );
+    const capacityFor = (placement) => {
+      const item = itemsById[placement.itemId];
+      if (container.allowStacking === false || item.stackable === false) {
+        return 0;
+      }
+      return Math.max(0, Number(item.topLoadKg) || 0) ||
+        Math.max(0, Number(container.defaultTopLoadKg) || 0);
+    };
 
     for (const placement of [...newPlacements].sort(
       (a, b) => a.z - b.z || a.y - b.y || a.x - b.x
     )) {
       const item = itemsById[placement.itemId];
+      const onFloor = placement.z <= 0.01;
+      if (
+        (onFloor && item.onlyTop) ||
+        (!onFloor && (item.onlyBottom || container.allowStacking === false))
+      ) {
+        return { ok: false, reason: `${placement.name || "货物"} 的层位限制不满足` };
+      }
       const supportRequired = Math.max(
         0,
         Math.min(1, Number(item.supportRequired ?? 1))
       );
       const baseArea = footprintArea(placement);
-
-      if (placement.z <= 0.01) {
-        placement.supportItemIds = [];
-        placement.supportRatio = 1;
-        placement.supportDescription = "柜底";
-        loadById[placement.placementId] = loadById[placement.placementId] || 0;
-        allPlacements.push(placement);
-        continue;
-      }
-
-      const supports = allPlacements
+      const supports = onFloor ? [] : allPlacements
         .filter(
           (candidate) =>
+            candidate.z < placement.z &&
             Math.abs(candidate.z + candidate.dz - placement.z) <= 0.01
         )
         .map((candidate) => ({
@@ -695,72 +744,86 @@
           area: overlapArea(candidate, placement),
         }))
         .filter((entry) => entry.area > 0.01);
+      const supportedArea = supports.reduce((sum, entry) => sum + entry.area, 0);
+      const supportRatio = onFloor ? 1 : baseArea > 0 ? supportedArea / baseArea : 0;
 
-      const supportedArea = supports.reduce(
-        (sum, entry) => sum + entry.area,
-        0
-      );
-      const supportRatio = baseArea > 0 ? supportedArea / baseArea : 0;
-
-      if (supportRatio + 0.001 < supportRequired) {
+      if (!onFloor && (!supports.length || supportRatio + 0.001 < supportRequired)) {
         return {
           ok: false,
           reason: `${placement.name || "货物"} 的底部支撑不足`,
         };
       }
-
       for (const support of supports) {
-        const supportItem = itemsById[support.placement.itemId];
-        let supportCapacity = 0;
-        if (
-          container.allowStacking !== false &&
-          supportItem.stackable !== false
-        ) {
-          const explicitTopLoad = Math.max(
-            0,
-            Number(supportItem.topLoadKg) || 0
-          );
-          const defaultTopLoad = Math.max(
-            0,
-            Number(container.defaultTopLoadKg) || 0
-          );
-          supportCapacity =
-            explicitTopLoad > 0 ? explicitTopLoad : defaultTopLoad;
-          if (isLongCargo(supportItem, container)) {
-            supportCapacity = Math.max(supportCapacity, container.payload);
-          }
-        }
-        const allocatedLoad =
-          (placement.weight * support.area) / Math.max(supportedArea, 1);
-        const currentLoad = loadById[support.placement.placementId] || 0;
-
-        if (
-          supportCapacity <= 0 ||
-          currentLoad + allocatedLoad > supportCapacity + 0.001
-        ) {
+        if (capacityFor(support.placement) <= 0) {
           return {
             ok: false,
-            reason: `${supportItem.name || "下方货物"} 的顶部承重不足`,
+            reason: `${support.placement.name || "下方货物"} 的顶部承重不足`,
           };
         }
-
-        loadById[support.placement.placementId] =
-          currentLoad + allocatedLoad;
       }
 
-      placement.supportItemIds = supports.map(
-        (entry) => entry.placement.itemId
-      );
+      placement.supportShares = supports.map((entry) => ({
+        placementId: entry.placement.placementId,
+        ratio: entry.area / supportedArea,
+      }));
+      placement.supportItemIds = supports.map((entry) => entry.placement.itemId);
       placement.supportRatio = supportRatio;
-      placement.supportDescription = Array.from(
-        new Set(
-          supports.map(
-            (entry) => entry.placement.name || "下方货物"
-          )
-        )
+      placement.supportDescription = onFloor ? "柜底" : Array.from(
+        new Set(supports.map((entry) => entry.placement.name || "下方货物"))
       ).join("、");
-      loadById[placement.placementId] = loadById[placement.placementId] || 0;
+      placement.longStackLayers = isLongCargo(item, container)
+        ? 1 + Math.max(0, ...supports.map((entry) => entry.placement.longStackLayers || 0))
+        : 0;
+      if (placement.longStackLayers > container.longCargoMaxLayers) {
+        return { ok: false, reason: `${placement.name || "货物"} 超过长管叠层限制` };
+      }
+      loadById[placement.placementId] = 0;
       allPlacements.push(placement);
+      placementsById.set(placement.placementId, placement);
+    }
+
+    const addedLoads = new Map(
+      newPlacements.map((placement) => [placement.placementId, placement.weight])
+    );
+    for (const placement of [...allPlacements].sort((a, b) => b.z - a.z)) {
+      const addedLoad = addedLoads.get(placement.placementId) || 0;
+      if (!addedLoad) {
+        continue;
+      }
+      let shares = placement.supportShares;
+      if (!shares) {
+        const supports = placement.z <= 0.01 ? [] : allPlacements
+          .filter((candidate) =>
+            candidate.z < placement.z &&
+            Math.abs(candidate.z + candidate.dz - placement.z) <= 0.01
+          )
+          .map((candidate) => ({
+            placementId: candidate.placementId,
+            area: overlapArea(candidate, placement),
+          }))
+          .filter((entry) => entry.area > 0.01);
+        const area = supports.reduce((sum, entry) => sum + entry.area, 0);
+        shares = supports.map((entry) => ({
+          placementId: entry.placementId,
+          ratio: entry.area / area,
+        }));
+      }
+      for (const share of shares) {
+        const support = placementsById.get(share.placementId);
+        const allocatedLoad = addedLoad * share.ratio;
+        const totalLoad = (loadById[share.placementId] || 0) + allocatedLoad;
+        if (totalLoad > capacityFor(support) + 0.001) {
+          return {
+            ok: false,
+            reason: `${support.name || "下方货物"} 的顶部承重不足`,
+          };
+        }
+        loadById[share.placementId] = totalLoad;
+        addedLoads.set(
+          share.placementId,
+          (addedLoads.get(share.placementId) || 0) + allocatedLoad
+        );
+      }
     }
 
     return { ok: true, loadById };
@@ -892,6 +955,9 @@
   function expandFloorUnits(itemsById, remainingById, maxUnits) {
     const units = [];
     for (const item of Object.values(itemsById)) {
+      if (item.onlyTop) {
+        continue;
+      }
       const count = Math.min(remainingById[item.id] || 0, maxUnits - units.length);
       for (let index = 0; index < count; index += 1) {
         units.push(item);
@@ -1073,82 +1139,59 @@
           count > 0 && itemsById[id] && isLongCargo(itemsById[id], container)
       );
 
-      for (const space of spaces) {
-        for (const item of Object.values(itemsById)) {
-          const remainingCount = remainingById[item.id] || 0;
-          if (remainingCount < 1) {
-            continue;
-          }
-          if (longRemaining && !isLongCargo(item, container)) {
-            continue;
-          }
-          const candidate = candidateForSpace(
-            item,
-            remainingCount,
-            space,
-            placedWeight,
-            container
-          );
-          if (candidate) {
-            const longCargo = isLongCargo(item, container);
-            if (
-              longCargo &&
-              longLane &&
-              Math.abs(candidate.space.y - longLane.y) > 0.01
-            ) {
+      const candidateSpaces = supportedCandidateSpaces(
+        spaces, placements, itemsById, container
+      );
+      const acceptCandidate = (candidate) => {
+        if (
+          isLongCargo(candidate.item, container) &&
+          longLane &&
+          Math.abs(candidate.space.y - longLane.y) > 0.01
+        ) {
+          return null;
+        }
+        const generated = createGridPlacements(
+          candidate.item,
+          candidate.space,
+          candidate.orientation,
+          candidate.capacity,
+          candidate.count
+        );
+        const supportCheck = validateAndAssignSupports(
+          generated.placements,
+          placements,
+          loadById,
+          itemsById,
+          container
+        );
+        return supportCheck.ok ? {
+          ...candidate,
+          generated,
+          nextLoadById: supportCheck.loadById,
+        } : null;
+      };
+      for (const longPass of longRemaining ? [true, false] : [false]) {
+        for (const space of candidateSpaces) {
+          for (const item of Object.values(itemsById)) {
+            const remainingCount = remainingById[item.id] || 0;
+            if (remainingCount < 1 || isLongCargo(item, container) !== longPass) {
               continue;
             }
-            if (longCargo && longLane && candidate.space.z > 0.01) {
-              const layersByX = new Map();
-              placements
-                .filter(
-                  (placement) =>
-                    isLongCargo(itemsById[placement.itemId], container) &&
-                    Math.abs(placement.y - longLane.y) <= 0.01
-                )
-                .forEach((placement) => {
-                  const key = Math.round(placement.x * 1000) / 1000;
-                  if (!layersByX.has(key)) {
-                    layersByX.set(key, new Set());
-                  }
-                  layersByX
-                    .get(key)
-                    .add(Math.round(placement.z * 1000) / 1000);
-                });
-              const candidateRight =
-                candidate.space.x + candidate.space.dx;
-              const hasFullColumn = Array.from(layersByX.entries()).some(
-                ([x, layers]) =>
-                  x < candidateRight - 0.01 &&
-                  x + 0.01 > candidate.space.x &&
-                  layers.size >= container.longCargoMaxLayers
-              );
-              if (hasFullColumn) {
-                continue;
-              }
-            }
-            const generated = createGridPlacements(
-              candidate.item,
-              candidate.space,
-              candidate.orientation,
-              candidate.capacity,
-              candidate.count
+            const candidate = candidateForSpace(
+              item,
+              remainingCount,
+              space,
+              placedWeight,
+              container,
+              acceptCandidate
             );
-            const supportCheck = validateAndAssignSupports(
-              generated.placements,
-              placements,
-              loadById,
-              itemsById,
-              container
-            );
-            if (supportCheck.ok) {
-              candidates.push({
-                ...candidate,
-                generated,
-                nextLoadById: supportCheck.loadById,
-              });
+            if (candidate) {
+              candidates.push(candidate);
             }
           }
+        }
+        if (candidates.length) {
+          break;
         }
       }
 
@@ -1350,6 +1393,7 @@
           Math.min(1, Number(item.supportRequired ?? 1))
         ),
         onlyBottom: Boolean(item.onlyBottom),
+        onlyTop: Boolean(item.onlyTop),
         quantity,
         rotation: item.rotation || "all",
         colorIndex: index % 8,
@@ -1368,6 +1412,9 @@
 
     items.forEach((item, index) => {
       const label = item.name || `第 ${index + 1} 项货物`;
+      if (item.onlyTop && item.onlyBottom) {
+        errors.push(`${label} 不能同时设置为仅限上层和仅限底层。`);
+      }
       if (item.shape === "cylinder") {
         if (!item.diameter || !item.cylinderLength) {
           errors.push(`${label} 的圆柱直径和长度必须大于 0。`);
@@ -1524,10 +1571,537 @@
     };
   }
 
+  function itemFitsContainer(item, container) {
+    return uniqueOrientations(item).some(
+      (orientation) =>
+        orientation[0] <= container.width + 0.001 &&
+        orientation[1] <= container.length + 0.001 &&
+        orientation[2] <= container.height + 0.001
+    );
+  }
+
+  function footprintOrientations(item) {
+    return [
+      [item.length, item.width],
+      [item.width, item.length],
+    ];
+  }
+
+  function singleSupport(top, base, height) {
+    if (base.shape !== "box" || top.shape !== "box") {
+      return null;
+    }
+    if (base.height + top.height > height) {
+      return null;
+    }
+    for (const [baseLength, baseWidth] of footprintOrientations(base)) {
+      for (const [topLength, topWidth] of footprintOrientations(top)) {
+        if (baseLength >= topLength && baseWidth >= topWidth) {
+          return {
+            length: baseLength,
+            width: baseWidth,
+            topLength,
+            topWidth,
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  function pairSupport(top, first, second, height) {
+    if (
+      first.shape !== "box" ||
+      second.shape !== "box" ||
+      top.shape !== "box"
+    ) {
+      return null;
+    }
+    if (first.height !== second.height) {
+      return null;
+    }
+    if (first.height + top.height > height) {
+      return null;
+    }
+    for (const [firstLength, firstWidth] of footprintOrientations(first)) {
+      for (const [secondLength, secondWidth] of footprintOrientations(second)) {
+        for (const [topLength, topWidth] of footprintOrientations(top)) {
+          if (
+            firstWidth >= topWidth &&
+            secondWidth >= topWidth &&
+            firstLength + secondLength >= topLength
+          ) {
+            return {
+              length: firstLength + secondLength,
+              width: Math.max(firstWidth, secondWidth),
+              topLength,
+              topWidth,
+              firstLength,
+              firstWidth,
+              secondLength,
+              secondWidth,
+            };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function buildStackUnits(items, container, height) {
+    const order = new Map(items.map((item, index) => [item.id, index]));
+    const tops = items
+      .filter((item) => item.onlyTop && item.quantity === 1)
+      .sort((a, b) => order.get(a.id) - order.get(b.id));
+    const bases = items.filter(
+      (item) =>
+        !item.onlyTop &&
+        item.quantity === 1 &&
+        item.packageType !== "bundle" &&
+        item.shape === "box"
+    );
+    const used = new Set();
+    const units = [];
+
+    for (const top of tops) {
+      const free = bases.filter((base) => !used.has(base.id));
+      const pairs = [];
+      for (let i = 0; i < free.length; i += 1) {
+        for (let j = i + 1; j < free.length; j += 1) {
+          const first = free[i];
+          const second = free[j];
+          const support = pairSupport(top, first, second, height);
+          if (!support) {
+            continue;
+          }
+          const bottomCount =
+            (first.onlyBottom ? 1 : 0) + (second.onlyBottom ? 1 : 0);
+          const bottomRank = bottomCount === 2 ? 0 : bottomCount === 1 ? 1 : 2;
+          const identical =
+            first.length === second.length && first.width === second.width
+              ? 0
+              : 1;
+          pairs.push({
+            first,
+            second,
+            support,
+            rank: [
+              identical,
+              bottomRank,
+              support.length * support.width,
+              order.get(first.id),
+              order.get(second.id),
+            ],
+          });
+        }
+      }
+      pairs.sort((a, b) => {
+        for (let k = 0; k < a.rank.length; k += 1) {
+          if (a.rank[k] < b.rank[k]) return -1;
+          if (a.rank[k] > b.rank[k]) return 1;
+        }
+        return 0;
+      });
+
+      let matched = null;
+      let isSingle = false;
+      const singleBases = free
+        .filter((base) => base.onlyBottom)
+        .map((base) => ({ base, support: singleSupport(top, base, height) }))
+        .filter((candidate) => candidate.support)
+        .sort(
+          (a, b) =>
+            a.support.length * a.support.width -
+            b.support.length * b.support.width
+        );
+      if (singleBases.length) {
+        matched = { base: singleBases[0].base, support: singleBases[0].support };
+        isSingle = true;
+      }
+      if (!matched && pairs.length) {
+        matched = pairs[0];
+      }
+      if (!matched) {
+        continue;
+      }
+
+      const members = [];
+      if (isSingle) {
+        const base = matched.base;
+        const support = matched.support;
+        members.push({
+          item: base,
+          x: 0,
+          y: 0,
+          z: 0,
+          dx: support.width,
+          dy: support.length,
+          dz: base.height,
+        });
+        members.push({
+          item: top,
+          x: 0,
+          y: 0,
+          z: base.height,
+          dx: support.topWidth,
+          dy: support.topLength,
+          dz: top.height,
+        });
+        used.add(base.id);
+      } else {
+        const { first, second, support } = matched;
+        members.push({
+          item: first,
+          x: 0,
+          y: 0,
+          z: 0,
+          dx: support.firstWidth,
+          dy: support.firstLength,
+          dz: first.height,
+        });
+        members.push({
+          item: second,
+          x: 0,
+          y: support.firstLength,
+          z: 0,
+          dx: support.secondWidth,
+          dy: support.secondLength,
+          dz: second.height,
+        });
+        members.push({
+          item: top,
+          x: 0,
+          y: 0,
+          z: first.height,
+          dx: support.topWidth,
+          dy: support.topLength,
+          dz: top.height,
+        });
+        used.add(first.id);
+        used.add(second.id);
+      }
+
+      units.push({
+        id: `stack-unit-${units.length + 1}`,
+        sku: `组合${String.fromCharCode(65 + units.length)}`,
+        name: `预组合 ${members
+          .filter((member) => member.item !== top)
+          .map((member) => member.item.sku || member.item.name)
+          .join("+")}/${top.sku || top.name}`,
+        packageType: "pallet",
+        shape: "box",
+        length: Math.max(...members.map((member) => member.y + member.dy)),
+        width: Math.max(...members.map((member) => member.x + member.dx)),
+        height: matched.support ? members[0].item.height + top.height : top.height,
+        quantity: 1,
+        weight: members.reduce((sum, member) => sum + member.item.weight, 0),
+        rotation: "fixed",
+        clearance: 0,
+        baseHeight: 0,
+        dimensionsIncludeBase: true,
+        onlyBottom: true,
+        onlyTop: false,
+        stackable: false,
+        supportRequired: 1,
+        topLoadKg: 0,
+        colorIndex: top.colorIndex,
+        members,
+      });
+    }
+
+    units.forEach((unit) => {
+      if (unit.height > height) {
+        unit.height = height;
+      }
+    });
+    return units;
+  }
+
+  function expandUnitPlacements(placements, unitsById) {
+    const expanded = [];
+    for (const placement of placements) {
+      const unit = unitsById[placement.itemId];
+      if (!unit) {
+        expanded.push(placement);
+        continue;
+      }
+      for (const member of unit.members) {
+        expanded.push({
+          ...member.item,
+          placementId: `${placement.placementId || placement.itemId}-${member.item.id}`,
+          itemId: member.item.id,
+          x: placement.x + member.x,
+          y: placement.y + member.y,
+          z: placement.z + member.z,
+          dx: member.dx,
+          dy: member.dy,
+          dz: member.dz,
+          weight: member.item.weight,
+          unitId: unit.id,
+          unitName: unit.name,
+          supportDescription:
+            member.z > 0
+              ? unit.name
+              : placement.supportDescription,
+        });
+      }
+    }
+    return expanded;
+  }
+
+  function laneCandidate(item, container) {
+    return uniqueOrientations(item).find(
+      (orientation) =>
+        orientation[1] >= container.length * 0.95 &&
+        orientation[0] <= container.width * 0.5 &&
+        orientation[2] <= container.height
+    );
+  }
+
+  function planLoadSequence(rawItems, rawContainers, options = {}) {
+    const items = normalizeItems(rawItems);
+    if (!Array.isArray(rawContainers) || !rawContainers.length) {
+      return {
+        ok: false,
+        errors: ["请至少设置一个集装箱。"],
+        sequence: true,
+        containers: [],
+        items,
+        unloaded: [],
+      };
+    }
+    const templates = rawContainers.map((raw) => ({
+      ...raw,
+      width: Math.max(1, Number(raw.width) || 0),
+      length: Math.max(1, Number(raw.length) || 0),
+      height: Math.max(1, Number(raw.height) || 0),
+      payload: Math.max(0, Number(raw.payload) || 0),
+    }));
+    const autoGroup = options.autoGroup !== false;
+    const laneClearance = Math.max(0, Number(options.laneClearance) || 0);
+    const units = autoGroup ? buildStackUnits(items, templates[0], templates[0].height) : [];
+    const unitsById = Object.fromEntries(units.map((unit) => [unit.id, unit]));
+    const groupedIds = new Set(
+      units.flatMap((unit) => unit.members.map((member) => member.item.id))
+    );
+    const itemsById = Object.fromEntries(items.map((item) => [item.id, item]));
+    let pendingUnits = units.slice();
+    let pendingItems = items.filter((item) => !groupedIds.has(item.id));
+    const containers = [];
+
+    const expand = (placements) =>
+      autoGroup ? expandUnitPlacements(placements, unitsById) : placements;
+
+    const measure = (placements, template, label) => {
+      const volume = placements.reduce(
+        (sum, placement) =>
+          sum + placement.dx * placement.dy * placement.dz,
+        0
+      );
+      const weight = placements.reduce(
+        (sum, placement) => sum + (Number(placement.weight) || 0),
+        0
+      );
+      const containerVolume =
+        template.width * template.length * template.height;
+      return {
+        index: containers.length + 1,
+        label,
+        container: template,
+        placements,
+        summary: summarizePlacements(placements, itemsById),
+        weight,
+        volume,
+        cbm: volume / 1000000000,
+        volumeUtilization: containerVolume ? volume / containerVolume : 0,
+        weightUtilization: template.payload ? weight / template.payload : 0,
+      };
+    };
+
+    for (let index = 0; index < templates.length; index += 1) {
+      const template = templates[index];
+      const label = rawContainers[index].label || `第 ${index + 1} 柜`;
+      const unitsOnly = index === 0 && pendingUnits.length > 0;
+      const eligibleUnits = pendingUnits.filter((unit) =>
+        itemFitsContainer(unit, template)
+      );
+      const eligibleItems = pendingItems.filter((item) =>
+        itemFitsContainer(item, template)
+      );
+      let candidates = unitsOnly
+        ? eligibleUnits
+        : [...eligibleUnits, ...eligibleItems];
+      if (!candidates.length) {
+        continue;
+      }
+
+      const laneItems = candidates.filter((item) => laneCandidate(item, template));
+      const laneItem = laneItems.length === 1 ? laneItems[0] : null;
+      const laneOrientation = laneItem ? laneCandidate(laneItem, template) : null;
+      const laneWidth = laneOrientation ? laneOrientation[0] : 0;
+      const zone = laneItem
+        ? {
+            ...template,
+            width: template.width - laneWidth,
+            height: Math.max(1, template.height - laneClearance),
+            payload: Math.max(0, template.payload - laneItem.weight),
+          }
+        : template;
+      const packItems = laneItem
+        ? candidates.filter(
+            (item) => item.id !== laneItem.id && itemFitsContainer(item, zone)
+          )
+        : candidates;
+
+      const attempts = [packItems];
+      if (unitsOnly && !packItems.length) {
+        attempts.push([...eligibleItems]);
+      }
+      let packed = null;
+      let usedInput = null;
+      for (const attemptInput of attempts) {
+        if (!attemptInput.length) {
+          continue;
+        }
+        const result = planLoad(attemptInput, zone);
+        if (result.containers.length) {
+          packed = result.containers[0];
+          usedInput = attemptInput;
+          break;
+        }
+      }
+      if (!packed) {
+        continue;
+      }
+
+      const lanePlacements = [];
+      if (laneItem && laneOrientation) {
+        lanePlacements.push({
+          ...laneItem,
+          placementId: laneItem.id,
+          itemId: laneItem.id,
+          x: 0,
+          y: 0,
+          z: 0,
+          dx: laneOrientation[0],
+          dy: laneOrientation[1],
+          dz: laneOrientation[2],
+          supportDescription: "柜底长货通道",
+        });
+      }
+      const shifted = packed.placements.map((placement) =>
+        laneWidth ? { ...placement, x: placement.x + laneWidth } : placement
+      );
+      const expanded = expand([...lanePlacements, ...shifted]);
+      const placedIds = new Set(packed.placements.map((placement) => placement.itemId));
+      const laneIds = new Set(lanePlacements.map((placement) => placement.itemId));
+
+      containers.push(measure(expanded, template, label));
+      pendingUnits = pendingUnits.filter((unit) => !placedIds.has(unit.id));
+      pendingItems = pendingItems.filter(
+        (item) => !placedIds.has(item.id) && !laneIds.has(item.id)
+      );
+    }
+
+    const unloaded = [
+      ...pendingItems.map((item) => ({
+        itemId: item.id,
+        name: item.name,
+        sku: item.sku,
+        count: item.quantity,
+      })),
+      ...pendingUnits.flatMap((unit) =>
+        unit.members.map((member) => ({
+          itemId: member.item.id,
+          name: member.item.name,
+          sku: member.item.sku,
+          count: 1,
+        }))
+      ),
+    ];
+
+    if (!containers.length || unloaded.length) {
+      const errors = [];
+      if (!containers.length) {
+        errors.push("当前条件下没有任何货物可以装入。");
+      } else {
+        errors.push(
+          `仍有 ${unloaded.reduce(
+            (sum, item) => sum + item.count,
+            0
+          )} 件货物未能装载，请检查重量、旋转或叠放限制。`
+        );
+      }
+      return {
+        ok: false,
+        errors,
+        sequence: true,
+        containers,
+        items,
+        unloaded,
+        autoGroups: units.map((unit) => ({
+          id: unit.id,
+          name: unit.name,
+          members: unit.members.map((member) => member.item.id),
+        })),
+      };
+    }
+
+    const totalWeight = containers.reduce(
+      (sum, entry) => sum + entry.weight,
+      0
+    );
+    const totalVolume = containers.reduce(
+      (sum, entry) => sum + entry.volume,
+      0
+    );
+    const totalContainerVolume = containers.reduce(
+      (sum, entry) =>
+        sum +
+        entry.container.width * entry.container.length * entry.container.height,
+      0
+    );
+    const totalPayload = containers.reduce(
+      (sum, entry) => sum + entry.container.payload,
+      0
+    );
+
+    return {
+      ok: true,
+      errors: [],
+      sequence: true,
+      container: templates[0],
+      containers,
+      items,
+      unloaded: [],
+      totals: {
+        containers: containers.length,
+        units: containers.reduce(
+          (sum, entry) => sum + entry.placements.length,
+          0
+        ),
+        weight: totalWeight,
+        volume: totalVolume,
+        cbm: totalVolume / 1000000000,
+        volumeUtilization: totalContainerVolume
+          ? totalVolume / totalContainerVolume
+          : 0,
+        weightUtilization: totalPayload ? totalWeight / totalPayload : 0,
+      },
+      autoGroups: units.map((unit) => ({
+        id: unit.id,
+        name: unit.name,
+        members: unit.members.map((member) => member.item.id),
+      })),
+    };
+  }
+
   return {
     CONTAINERS,
+    buildStackUnits,
     normalizeItems,
     planLoad,
+    planLoadSequence,
     uniqueOrientations,
   };
 });
