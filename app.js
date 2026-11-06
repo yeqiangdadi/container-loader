@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const { CONTAINERS, planLoad } = window.ContainerPacking;
+  const { CONTAINERS, planLoad, planLoadSequence } = window.ContainerPacking;
   const STORAGE_KEY = "container-loader-state-v2";
   const COLORS = [
     "#0b766e",
@@ -32,8 +32,25 @@
     stackable: true,
     supportRequired: 1,
     onlyBottom: false,
+    onlyTop: false,
     quantity: 1000,
     rotation: "all",
+  };
+
+  const DEFAULT_SMALL_CONTAINER = {
+    id: "small",
+    name: "小柜",
+    description: "混柜方案中的小柜",
+    width: 2300,
+    length: 5850,
+    height: 2200,
+    payload: 28200,
+    longCargoAllowed: false,
+    longCargoWidthColumns: 0,
+    longCargoLengthPositions: 0,
+    longCargoMaxLayers: 0,
+    allowStacking: true,
+    defaultTopLoadKg: 3000,
   };
 
   const AI_STORAGE_KEY = "container-loader-ai-v1";
@@ -44,6 +61,14 @@
   };
 
   const elements = {
+    planMode: document.querySelector("#planMode"),
+    mixFields: document.querySelector("#mixFields"),
+    mixBigCount: document.querySelector("#mixBigCount"),
+    smallWidth: document.querySelector("#smallWidth"),
+    smallLength: document.querySelector("#smallLength"),
+    smallHeight: document.querySelector("#smallHeight"),
+    smallPayload: document.querySelector("#smallPayload"),
+    autoGroupInput: document.querySelector("#autoGroupInput"),
     containerSelect: document.querySelector("#containerSelect"),
     containerWidth: document.querySelector("#containerWidth"),
     containerLength: document.querySelector("#containerLength"),
@@ -148,6 +173,10 @@
     return {
       rows: [{ id: createId(), ...DEFAULT_ROW }],
       container,
+      smallContainer: { ...DEFAULT_SMALL_CONTAINER },
+      planMode: "single",
+      mixBigCount: 2,
+      autoGroup: true,
       result: null,
       activeTab: 0,
       viewMode: "iso",
@@ -227,6 +256,13 @@
         ...fallback,
         ...saved,
         container: savedContainer,
+        smallContainer: {
+          ...DEFAULT_SMALL_CONTAINER,
+          ...saved.smallContainer,
+        },
+        planMode: saved.planMode === "mix" ? "mix" : "single",
+        mixBigCount: Math.max(1, Number(saved.mixBigCount) || 2),
+        autoGroup: saved.autoGroup !== false,
         result: null,
       };
     } catch {
@@ -241,6 +277,10 @@
         JSON.stringify({
           rows: state.rows,
           container: state.container,
+          smallContainer: state.smallContainer,
+          planMode: state.planMode,
+          mixBigCount: state.mixBigCount,
+          autoGroup: state.autoGroup,
           activeTab: state.activeTab,
           viewMode: state.viewMode,
         })
@@ -312,8 +352,19 @@
       state.container.defaultTopLoadKg,
       100
     );
-    elements.containerState.textContent =
-      state.container.id === "custom" ? "自定义" : state.container.name;
+    elements.planMode.value = state.planMode === "mix" ? "mix" : "single";
+    elements.mixFields.hidden = state.planMode !== "mix";
+    elements.mixBigCount.value = state.mixBigCount;
+    elements.smallWidth.value = state.smallContainer.width;
+    elements.smallLength.value = state.smallContainer.length;
+    elements.smallHeight.value = state.smallContainer.height;
+    elements.smallPayload.value = state.smallContainer.payload;
+    elements.autoGroupInput.checked = state.autoGroup !== false;
+    elements.containerState.textContent = state.planMode === "mix"
+      ? "大柜 + 小柜"
+      : state.container.id === "custom"
+        ? "自定义"
+        : state.container.name;
   }
 
   function renderCargoRows() {
@@ -458,6 +509,10 @@
                   <input type="checkbox" data-field="onlyBottom" ${row.onlyBottom ? "checked" : ""} />
                   <span>此包装只允许放在柜底</span>
                 </label>
+                <label class="stack-toggle mini-field" style="grid-column:1 / -1">
+                  <input type="checkbox" data-field="onlyTop" ${row.onlyTop ? "checked" : ""} />
+                  <span>此包装必须放在其他包装上方</span>
+                </label>
               </div>
             </div>
           </article>
@@ -510,8 +565,13 @@
       return;
     }
 
-    if (["onlyBottom", "dimensionsIncludeBase", "stackable"].includes(field)) {
+    if (["onlyBottom", "onlyTop", "dimensionsIncludeBase", "stackable"].includes(field)) {
       row[field] = input.checked;
+      if (input.checked && ["onlyBottom", "onlyTop"].includes(field)) {
+        const opposite = field === "onlyTop" ? "onlyBottom" : "onlyTop";
+        row[opposite] = false;
+        rowElement.querySelector(`[data-field="${opposite}"]`).checked = false;
+      }
       if (field === "stackable") {
         saveState();
         return;
@@ -661,8 +721,61 @@
       defaultTopLoadKg: numberValue(elements.defaultTopLoadKg.value, 0),
     };
     elements.containerSelect.value = preset ? preset.id : "custom";
-    elements.containerState.textContent = preset ? preset.name : "自定义";
+    elements.containerState.textContent =
+      state.planMode === "mix"
+        ? "大柜 + 小柜"
+        : preset
+          ? preset.name
+          : "自定义";
     saveState();
+  }
+
+  function handlePlanModeChange() {
+    state.planMode = elements.planMode.value === "mix" ? "mix" : "single";
+    elements.mixFields.hidden = state.planMode !== "mix";
+    elements.containerState.textContent =
+      state.planMode === "mix"
+        ? "大柜 + 小柜"
+        : state.container.id === "custom"
+          ? "自定义"
+          : state.container.name;
+    saveState();
+  }
+
+  function handleMixInput() {
+    state.mixBigCount = Math.max(
+      1,
+      Math.min(6, Math.floor(numberValue(elements.mixBigCount.value, 2)))
+    );
+    state.autoGroup = elements.autoGroupInput.checked;
+    state.smallContainer = {
+      ...state.smallContainer,
+      width: Math.max(1, numberValue(elements.smallWidth.value, 0)),
+      length: Math.max(1, numberValue(elements.smallLength.value, 0)),
+      height: Math.max(1, numberValue(elements.smallHeight.value, 0)),
+      payload: Math.max(0, numberValue(elements.smallPayload.value, 0)),
+    };
+    saveState();
+  }
+
+  function sequenceContainers() {
+    const bigCount = Math.max(
+      1,
+      Math.min(6, Math.floor(numberValue(state.mixBigCount, 2)))
+    );
+    return [
+      ...Array.from({ length: bigCount }, (_, index) => ({
+        ...state.container,
+        label: `大柜${index + 1}`,
+      })),
+      {
+        ...state.smallContainer,
+        label: "小柜1",
+        defaultTopLoadKg:
+          state.smallContainer.defaultTopLoadKg ??
+          state.container.defaultTopLoadKg,
+      },
+    ];
   }
 
   function collectRows() {
@@ -686,6 +799,7 @@
       stackable: row.stackable !== false,
       supportRequired: numberValue(row.supportRequired, 1),
       onlyBottom: Boolean(row.onlyBottom),
+      onlyTop: Boolean(row.onlyTop),
       quantity: numberValue(row.quantity, 0),
       rotation: row.rotation || "all",
       colorIndex: index % COLORS.length,
@@ -694,7 +808,13 @@
 
   function calculate() {
     const rows = collectRows();
-    const result = planLoad(rows, state.container);
+    const result =
+      state.planMode === "mix"
+        ? planLoadSequence(rows, sequenceContainers(), {
+            autoGroup: state.autoGroup !== false,
+            laneClearance: 100,
+          })
+        : planLoad(rows, state.container);
     state.result = result;
     state.activeTab = 0;
     saveState();
@@ -706,7 +826,9 @@
 
     renderResult(result);
     showToast(
-      `${result.totals.containers} 个${result.container.name}可装载全部货物。`
+      result.sequence
+        ? `${result.totals.containers} 个柜混装完成，全部货物已分配。`
+        : `${result.totals.containers} 个${result.container.name}可装载全部货物。`
     );
   }
 
@@ -731,7 +853,9 @@
     elements.emptyState.hidden = true;
     elements.resultError.hidden = true;
     elements.resultContent.hidden = false;
-    elements.resultTitle.textContent = `${result.container.name} 装柜结果`;
+    elements.resultTitle.textContent = result.sequence
+      ? `${result.totals.containers} 个柜混装结果`
+      : `${result.container.name} 装柜结果`;
     elements.resultBadge.textContent = `平均容积率 ${percent(
       totals.volumeUtilization
     )}`;
@@ -768,7 +892,7 @@
             index === state.activeTab ? "active" : ""
           }" type="button" data-tab="${index}" role="tab" aria-selected="${
             index === state.activeTab
-          }">第 ${container.index} 柜</button>
+          }">${escapeHtml(container.label || `第 ${container.index} 柜`)}</button>
         `
       )
       .join("");
@@ -790,8 +914,9 @@
       Math.min(result.containers.length - 1, state.activeTab)
     );
     const container = result.containers[state.activeTab];
-    elements.visualTitle.textContent = `第 ${container.index} 柜`;
-    elements.summaryTitle.textContent = `第 ${container.index} 柜明细`;
+    const label = container.label || `第 ${container.index} 柜`;
+    elements.visualTitle.textContent = label;
+    elements.summaryTitle.textContent = `${label}明细`;
     elements.containerUnits.textContent = formatInteger(
       container.placements.length
     );
@@ -801,7 +926,7 @@
     elements.containerWeightRate.textContent = percent(
       container.weightUtilization
     );
-    elements.detailScope.textContent = `第 ${container.index} 柜 / 共 ${result.containers.length} 柜`;
+    elements.detailScope.textContent = `${label} / 共 ${result.containers.length} 柜`;
 
     elements.containerTabs
       .querySelectorAll("[data-tab]")
@@ -837,7 +962,7 @@
         const color = COLORS[item ? item.colorIndex : 0];
         return `
           <tr>
-            <td>第 ${container.index} 柜</td>
+            <td>${escapeHtml(label)}</td>
             <td>
               <div class="table-name">
                 <i class="color-dot" style="background:${color}"></i>
@@ -858,7 +983,7 @@
       .join("");
 
     if (renderer) {
-      renderer.setContainer(container, result.container);
+      renderer.setContainer(container, container.container || result.container);
     }
     saveState();
   }
@@ -885,7 +1010,7 @@
       container.summary.forEach((entry) => {
         const item = itemById(entry.itemId);
         rows.push([
-          `第 ${container.index} 柜`,
+          container.label || `第 ${container.index} 柜`,
           item ? item.sku : "",
           entry.name,
           entry.count,
@@ -919,7 +1044,7 @@
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${state.result.container.name}-装柜方案.csv`;
+    link.download = `${state.result.sequence ? "混柜方案" : state.result.container.name}-装柜方案.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -1510,6 +1635,7 @@
     clearance: ["余量", "安全余量", "间隙", "边距", "clearance", "margin"],
     supportRequired: ["支撑要求", "底部支撑", "支撑比例", "supportrequired", "support"],
     onlyBottom: ["只放柜底", "只能放底层", "仅放底层", "onlybottom", "bottomonly"],
+    onlyTop: ["只放上层", "必须上层", "仅放上层", "onlytop", "toponly"],
   };
 
   const PACKAGE_TYPE_LABELS = {
@@ -1529,7 +1655,7 @@
 
   const TEMPLATE_HEAD = [
     "货号", "名称", "包装类型", "长(mm)", "宽(mm)", "高(mm)",
-    "数量(件)", "单件重量(kg)", "允许叠放", "顶部可承重(kg)", "旋转规则",
+    "数量(件)", "单件重量(kg)", "允许叠放", "顶部可承重(kg)", "旋转规则", "只放柜底", "必须上层",
   ];
 
   const PACKAGE_TYPE_MATCHES = [
@@ -1554,6 +1680,7 @@
     "- weight: 单件重量，kg 数字",
     "- stackable: 是否允许被叠放（布尔值；用户说不能叠放/不可叠时为 false，没说就省略）",
     "- topLoadKg: 该包装顶部最多能承受的重量 kg，不确定就省略",
+    "- onlyBottom: 必须放柜底；onlyTop: 必须放其他包装上方。均为布尔值，不可同时为 true，不确定就省略",
     '- rotation: 旋转规则，"all"可全向翻转 / "upright"只可水平旋转 / "fixed"不可旋转，不确定就省略',
     "注意：单位统一换算成毫米和 kg（厘米×10，米×1000，吨×1000）。数量缺失时按 1 估算。",
     "长宽高按用户描述顺序合理判断，拿不准时按长≥宽≥高的常见纸箱习惯排。",
@@ -1881,6 +2008,7 @@
       stackable: coerceBool(record.stackable) !== false,
       supportRequired: parseSupportValue(record.supportRequired),
       onlyBottom: coerceBool(record.onlyBottom) === true,
+      onlyTop: coerceBool(record.onlyTop) === true,
       quantity:
         meaning === "perRow"
           ? 1
@@ -2387,6 +2515,8 @@
         row.stackable ? "是" : "否",
         row.topLoadKg || "",
         ROTATION_LABELS[row.rotation] || "可全向翻转",
+        row.onlyBottom ? "是" : "否",
+        row.onlyTop ? "是" : "否",
       ]);
     });
     return aoa;
@@ -2439,6 +2569,16 @@
 
   function bindEvents() {
     elements.containerSelect.addEventListener("change", handleContainerSelect);
+    elements.planMode.addEventListener("change", handlePlanModeChange);
+    [
+      elements.mixBigCount,
+      elements.smallWidth,
+      elements.smallLength,
+      elements.smallHeight,
+      elements.smallPayload,
+      elements.autoGroupInput,
+    ].forEach((input) => input.addEventListener("input", handleMixInput));
+    elements.autoGroupInput.addEventListener("change", handleMixInput);
     [
       elements.containerWidth,
       elements.containerLength,
