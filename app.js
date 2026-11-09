@@ -13,6 +13,8 @@
     "#5d741f",
     "#a06a13",
   ];
+  const MANUAL_COLOR = "#c9762d";
+  const MANUAL_SNAP_MM = 10;
 
   const DEFAULT_ROW = {
     sku: "SKU-001",
@@ -152,6 +154,18 @@
     viewResetButton: document.querySelector("#viewResetButton"),
     fullscreenButton: document.querySelector("#fullscreenButton"),
     viewSwitch: document.querySelector("#viewSwitch"),
+    manualToggle: document.querySelector("#manualToggle"),
+    manualPanel: document.querySelector("#manualPanel"),
+    manualStatus: document.querySelector("#manualStatus"),
+    manualLength: document.querySelector("#manualLength"),
+    manualWidth: document.querySelector("#manualWidth"),
+    manualHeight: document.querySelector("#manualHeight"),
+    manualWeight: document.querySelector("#manualWeight"),
+    manualAddButton: document.querySelector("#manualAddButton"),
+    manualRotateButton: document.querySelector("#manualRotateButton"),
+    manualDropButton: document.querySelector("#manualDropButton"),
+    manualDeleteButton: document.querySelector("#manualDeleteButton"),
+    manualClearButton: document.querySelector("#manualClearButton"),
     toast: document.querySelector("#toast"),
   };
 
@@ -180,6 +194,8 @@
       result: null,
       activeTab: 0,
       viewMode: "iso",
+      manualMode: false,
+      manualByTab: {},
     };
   }
 
@@ -264,6 +280,11 @@
         mixBigCount: Math.max(1, Number(saved.mixBigCount) || 2),
         autoGroup: saved.autoGroup !== false,
         result: null,
+        manualMode: false,
+        manualByTab:
+          saved.manualByTab && typeof saved.manualByTab === "object"
+            ? saved.manualByTab
+            : {},
       };
     } catch {
       return fallback;
@@ -283,6 +304,7 @@
           autoGroup: state.autoGroup,
           activeTab: state.activeTab,
           viewMode: state.viewMode,
+          manualByTab: state.manualByTab,
         })
       );
     } catch {
@@ -984,6 +1006,13 @@
 
     if (renderer) {
       renderer.setContainer(container, container.container || result.container);
+      renderer.setManualPlacements(
+        state.manualMode ? manualItems() : []
+      );
+      if (renderer.addArmed) {
+        setManualAddArmed(false);
+      }
+      refreshManualPanel();
     }
     saveState();
   }
@@ -995,6 +1024,249 @@
     }
     state.activeTab = Number(button.dataset.tab);
     renderActiveContainer();
+  }
+
+  function activeContainer() {
+    if (!state.result || !state.result.ok) {
+      return null;
+    }
+    return state.result.containers[state.activeTab] || null;
+  }
+
+  function manualTemplate() {
+    const container = activeContainer();
+    if (!container) {
+      return null;
+    }
+    return container.container || state.result.container;
+  }
+
+  function manualItems() {
+    const key = String(state.activeTab);
+    if (!Array.isArray(state.manualByTab[key])) {
+      state.manualByTab[key] = [];
+    }
+    return state.manualByTab[key];
+  }
+
+  function readManualDraft() {
+    const dx = Math.max(50, Math.round(numberValue(elements.manualLength.value, 1200)));
+    const dy = Math.max(50, Math.round(numberValue(elements.manualWidth.value, 1000)));
+    const dz = Math.max(50, Math.round(numberValue(elements.manualHeight.value, 1000)));
+    const weight = Math.max(0, numberValue(elements.manualWeight.value, 500));
+    return { dx, dy, dz, weight };
+  }
+
+  function manualOverlaps(list) {
+    const container = activeContainer();
+    if (!container) {
+      return 0;
+    }
+    const plan = container.placements;
+    const hits = new Set();
+    list.forEach((item, index) => {
+      if (plan.some((entry) => boxesOverlap(item, entry))) {
+        hits.add(item.id);
+      }
+      for (let other = index + 1; other < list.length; other += 1) {
+        if (boxesOverlap(item, list[other])) {
+          hits.add(item.id);
+          hits.add(list[other].id);
+        }
+      }
+    });
+    return hits.size;
+  }
+
+  function refreshManualPanel() {
+    if (!renderer) {
+      return;
+    }
+    const selected = manualItems().find(
+      (item) => item.id === renderer.selectedManualId
+    );
+    elements.manualRotateButton.disabled = !selected;
+    elements.manualDropButton.disabled = !selected;
+    elements.manualDeleteButton.disabled = !selected;
+    elements.manualClearButton.disabled = !manualItems().length;
+    if (!state.manualMode) {
+      return;
+    }
+    const list = manualItems();
+    if (renderer.addArmed) {
+      elements.manualStatus.textContent = `已放置 ${list.length} 件 · 在柜内点击继续添加；点箱子顶部可叠放；Esc 退出`;
+      elements.manualStatus.classList.remove("warn");
+      return;
+    }
+    const volume =
+      list.reduce((sum, item) => sum + item.dx * item.dy * item.dz, 0) / 1e9;
+    const weight = list.reduce(
+      (sum, item) => sum + (Number(item.weight) || 0),
+      0
+    );
+    const overlaps = manualOverlaps(list);
+    const parts = [
+      `手动 ${list.length} 件 · ${volume.toFixed(3)} CBM · ${Math.round(weight)} kg`,
+    ];
+    if (overlaps > 0) {
+      parts.push(`与计划/手动货物重叠 ${overlaps} 件（仅演示，不影响计算）`);
+    }
+    if (selected) {
+      parts.push(
+        `选中：X ${Math.round(selected.x)} / Y ${Math.round(selected.y)} / Z ${Math.round(selected.z)} mm`
+      );
+    }
+    elements.manualStatus.textContent = parts.join(" · ");
+    elements.manualStatus.classList.toggle("warn", overlaps > 0);
+  }
+
+  function setManualMode(enabled) {
+    if (enabled && (!state.result || !state.result.ok)) {
+      showToast("先完成一次装柜计算，再进入手动摆放。");
+      return;
+    }
+    state.manualMode = Boolean(enabled);
+    elements.manualToggle.classList.toggle("active", state.manualMode);
+    elements.manualToggle.setAttribute(
+      "aria-pressed",
+      String(state.manualMode)
+    );
+    elements.manualPanel.hidden = !state.manualMode;
+    elements.canvasWrap.classList.toggle("manual-mode", state.manualMode);
+    if (!renderer) {
+      return;
+    }
+    if (!state.manualMode) {
+      elements.manualAddButton.classList.remove("armed");
+      elements.manualAddButton.textContent = "＋ 添加箱子";
+      elements.canvasWrap.classList.remove("manual-add");
+    }
+    renderer.setManualMode(state.manualMode);
+    renderer.setAddArmed(false);
+    renderer.setManualPlacements(state.manualMode ? manualItems() : []);
+    refreshManualPanel();
+    saveState();
+  }
+
+  function setManualAddArmed(armed) {
+    if (!state.manualMode) {
+      return;
+    }
+    elements.manualAddButton.classList.toggle("armed", armed);
+    elements.manualAddButton.textContent = armed ? "完成添加" : "＋ 添加箱子";
+    elements.canvasWrap.classList.toggle("manual-add", armed);
+    if (armed && renderer.viewMode === "front") {
+      state.viewMode = "iso";
+      renderer.setView("iso");
+      saveState();
+    }
+    renderer.setManualDraft(readManualDraft());
+    renderer.setAddArmed(armed);
+    refreshManualPanel();
+  }
+
+  function addManualAt(position) {
+    const container = activeContainer();
+    const template = manualTemplate();
+    if (!state.manualMode || !renderer || !container || !template) {
+      return;
+    }
+    const draft = readManualDraft();
+    const list = manualItems();
+    const item = {
+      id: `manual-${createId()}`,
+      itemId: "manual",
+      name: `手动箱 ${list.length + 1}`,
+      manual: true,
+      x: clampValue(position.x, 0, Math.max(0, template.width - draft.dx)),
+      y: clampValue(position.y, 0, Math.max(0, template.length - draft.dy)),
+      z: clampValue(position.z, 0, Math.max(0, template.height - draft.dz)),
+      dx: draft.dx,
+      dy: draft.dy,
+      dz: draft.dz,
+      weight: draft.weight,
+      colorIndex: list.length % COLORS.length,
+    };
+    list.push(item);
+    renderer.setManualPlacements(list);
+    renderer.setManualDraft(draft);
+    renderer.selectManual(item.id);
+    refreshManualPanel();
+    saveState();
+  }
+
+  function selectedManualItem() {
+    if (!renderer || !renderer.selectedManualId) {
+      return null;
+    }
+    return (
+      manualItems().find((item) => item.id === renderer.selectedManualId) ||
+      null
+    );
+  }
+
+  function rotateSelectedManual() {
+    const item = selectedManualItem();
+    const template = manualTemplate();
+    if (!item || !template) {
+      return;
+    }
+    const centerX = item.x + item.dx / 2;
+    const centerY = item.y + item.dy / 2;
+    const dx = item.dy;
+    const dy = item.dx;
+    item.dx = dx;
+    item.dy = dy;
+    item.x = clampValue(centerX - dx / 2, 0, Math.max(0, template.width - dx));
+    item.y = clampValue(centerY - dy / 2, 0, Math.max(0, template.length - dy));
+    if (item.z + item.dz > template.height) {
+      item.z = Math.max(0, template.height - item.dz);
+    }
+    renderer.requestDraw();
+    refreshManualPanel();
+    saveState();
+  }
+
+  function dropSelectedManual() {
+    const item = selectedManualItem();
+    if (!item) {
+      return;
+    }
+    item.z = 0;
+    renderer.requestDraw();
+    refreshManualPanel();
+    saveState();
+  }
+
+  function deleteSelectedManual() {
+    if (!renderer || !renderer.selectedManualId) {
+      return;
+    }
+    const list = manualItems();
+    const index = list.findIndex(
+      (item) => item.id === renderer.selectedManualId
+    );
+    if (index === -1) {
+      return;
+    }
+    list.splice(index, 1);
+    renderer.selectManual(null);
+    renderer.setManualPlacements(list);
+    refreshManualPanel();
+    saveState();
+  }
+
+  function clearManualItems() {
+    const list = manualItems();
+    if (!list.length) {
+      return;
+    }
+    list.length = 0;
+    renderer.selectManual(null);
+    renderer.setManualPlacements(list);
+    refreshManualPanel();
+    saveState();
+    showToast("已清空本柜的手动演示货物。");
   }
 
   function exportCsv() {
@@ -1113,13 +1385,17 @@
     state.result = null;
     state.activeTab = 0;
     state.viewMode = "iso";
+    state.manualByTab = {};
     setContainerInputs();
     renderCargoRows();
     showEmpty();
     saveState();
     if (renderer) {
+      renderer.setManualMode(false);
+      renderer.setManualPlacements([]);
       renderer.setView("iso");
     }
+    setManualMode(false);
     showToast("已恢复初始数据。");
   }
 
@@ -1142,6 +1418,16 @@
       this.width = 0;
       this.height = 0;
       this.maxVisible = 1800;
+      this.manualMode = false;
+      this.manualPlacements = [];
+      this.manualDraft = { dx: 1200, dy: 1000, dz: 1000 };
+      this.selectedManualId = null;
+      this.addArmed = false;
+      this.manualGhost = null;
+      this.manualDrag = null;
+      this.onManualAdd = null;
+      this.onManualSelectionChange = null;
+      this.onManualChange = null;
       this.resizeObserver = new ResizeObserver(() => this.resize());
       this.resizeObserver.observe(wrap);
       this.bindEvents();
@@ -1154,13 +1440,51 @@
         if (!this.container) {
           return;
         }
+        const local = this.localPoint(event);
+        if (this.manualMode && event.button === 0) {
+          if (this.addArmed) {
+            if (this.manualGhost && this.onManualAdd) {
+              this.onManualAdd({
+                x: this.manualGhost.x,
+                y: this.manualGhost.y,
+                z: this.manualGhost.z,
+              });
+            }
+            this.requestDraw();
+            return;
+          }
+          const hit = this.pickManual(local);
+          if (hit) {
+            this.selectManual(hit.id);
+            this.beginManualDrag(event, hit, local);
+            return;
+          }
+          this.selectManual(null);
+        }
         this.dragging = true;
         this.pointerId = event.pointerId;
         this.lastPointer = { x: event.clientX, y: event.clientY };
-        this.canvas.setPointerCapture(event.pointerId);
+        this.capturePointer(event.pointerId);
       });
 
       this.canvas.addEventListener("pointermove", (event) => {
+        if (this.manualMode) {
+          const local = this.localPoint(event);
+          if (
+            this.manualDrag &&
+            event.pointerId === this.manualDrag.pointerId
+          ) {
+            this.moveManualDrag(local);
+            return;
+          }
+          if (this.addArmed) {
+            this.updateManualGhost(local);
+            return;
+          }
+          if (!this.dragging) {
+            this.updateManualCursor(local);
+          }
+        }
         if (!this.dragging || event.pointerId !== this.pointerId) {
           return;
         }
@@ -1176,6 +1500,19 @@
       });
 
       const finishDrag = (event) => {
+        if (this.manualDrag && event.pointerId === this.manualDrag.pointerId) {
+          this.manualDrag = null;
+          this.pointerId = null;
+          this.canvas.style.cursor = "";
+          if (this.canvas.hasPointerCapture(event.pointerId)) {
+            this.canvas.releasePointerCapture(event.pointerId);
+          }
+          if (this.onManualChange) {
+            this.onManualChange();
+          }
+          this.requestDraw();
+          return;
+        }
         if (event.pointerId !== this.pointerId) {
           return;
         }
@@ -1202,7 +1539,11 @@
         },
         { passive: false }
       );
-      this.canvas.addEventListener("dblclick", () => this.setView("iso"));
+      this.canvas.addEventListener("dblclick", () => {
+        if (!this.manualMode) {
+          this.setView("iso");
+        }
+      });
     }
 
     resize() {
@@ -1242,6 +1583,345 @@
       elements.viewSwitch.querySelectorAll("button").forEach((button) => {
         button.classList.toggle("active", button.dataset.view === mode);
       });
+      this.requestDraw();
+    }
+
+    setManualMode(enabled) {
+      this.manualMode = Boolean(enabled);
+      this.addArmed = false;
+      this.manualGhost = null;
+      this.manualDrag = null;
+      this.selectedManualId = null;
+      this.canvas.style.cursor = "";
+      this.requestDraw();
+    }
+
+    setManualPlacements(list) {
+      this.manualPlacements = Array.isArray(list) ? list : [];
+      if (
+        this.selectedManualId &&
+        !this.manualPlacements.some(
+          (item) => item.id === this.selectedManualId
+        )
+      ) {
+        this.selectedManualId = null;
+      }
+      this.requestDraw();
+    }
+
+    setManualDraft(draft) {
+      if (!draft) {
+        return;
+      }
+      this.manualDraft = { ...draft };
+      this.requestDraw();
+    }
+
+    setAddArmed(armed) {
+      this.addArmed = Boolean(armed);
+      if (!this.addArmed) {
+        this.manualGhost = null;
+      }
+      this.canvas.style.cursor = "";
+      this.requestDraw();
+    }
+
+    selectManual(id) {
+      if (this.selectedManualId === id) {
+        return;
+      }
+      this.selectedManualId = id;
+      if (this.onManualSelectionChange) {
+        this.onManualSelectionChange(id);
+      }
+      this.requestDraw();
+    }
+
+    capturePointer(pointerId) {
+      try {
+        this.canvas.setPointerCapture(pointerId);
+      } catch {
+        // Synthetic or already-released pointers cannot be captured.
+      }
+    }
+
+    localPoint(event) {
+      const rect = this.canvas.getBoundingClientRect();
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    }
+
+    getMmPerPixel() {
+      const template = this.template;
+      const maxDimension = Math.max(
+        template.width,
+        template.length,
+        template.height
+      );
+      const scale = Math.max(1, this.getFitScale(template));
+      return (
+        maxDimension / (scale * Math.max(0.3, Math.cos(this.pitch)))
+      );
+    }
+
+    getSideMmPerPixel() {
+      const template = this.template;
+      const maxDimension = Math.max(
+        template.width,
+        template.length,
+        template.height
+      );
+      const scale = Math.max(1, this.getFitScale(template));
+      return (
+        maxDimension / (scale * Math.max(0.25, Math.abs(Math.cos(this.yaw))))
+      );
+    }
+
+    screenToWorldPlane(localX, localY, planeZ) {
+      const template = this.template;
+      if (!template) {
+        return null;
+      }
+      const sinPitch = Math.sin(this.pitch);
+      if (Math.abs(sinPitch) < 0.12) {
+        return null;
+      }
+      const maxDimension = Math.max(
+        template.width,
+        template.length,
+        template.height
+      );
+      const scale = Math.max(1, this.getFitScale(template));
+      const cosYaw = Math.cos(this.yaw);
+      const sinYaw = Math.sin(this.yaw);
+      const cosPitch = Math.cos(this.pitch);
+      const x1 = (localX - this.width / 2) / scale;
+      const y2 = (this.height * 0.56 - localY) / scale;
+      const zNormal = (planeZ - template.height / 2) / maxDimension;
+      const y1 = (y2 - zNormal * cosPitch) / sinPitch;
+      const xNormal = x1 * cosYaw + y1 * sinYaw;
+      const yNormal = -x1 * sinYaw + y1 * cosYaw;
+      return {
+        x: xNormal * maxDimension + template.width / 2,
+        y: yNormal * maxDimension + template.length / 2,
+      };
+    }
+
+    projectHull(placement, fitScale) {
+      const template = this.template;
+      const corners = [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 1, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+      ];
+      const points = corners.map(([fx, fy, fz]) =>
+        this.projectPoint(
+          {
+            x: placement.x + placement.dx * fx,
+            y: placement.y + placement.dy * fy,
+            z: placement.z + placement.dz * fz,
+          },
+          template,
+          fitScale
+        )
+      );
+      return convexHull(points);
+    }
+
+    placementDepth(placement, template, fitScale) {
+      const center = this.projectPoint(
+        {
+          x: placement.x + placement.dx / 2,
+          y: placement.y + placement.dy / 2,
+          z: placement.z + placement.dz / 2,
+        },
+        template,
+        fitScale
+      );
+      return center.depth;
+    }
+
+    pickPlacement(local, includePlan) {
+      const template = this.template;
+      if (!template) {
+        return null;
+      }
+      const fitScale = this.getFitScale(template);
+      const candidates = [];
+      const collect = (placement) => {
+        const hull = this.projectHull(placement, fitScale);
+        if (hull.length >= 3 && pointInPolygon(local, hull)) {
+          candidates.push({
+            item: placement,
+            depth: this.placementDepth(placement, template, fitScale),
+          });
+        }
+      };
+      this.manualPlacements.forEach(collect);
+      if (includePlan && this.container) {
+        this.container.placements.slice(0, this.maxVisible).forEach(collect);
+      }
+      if (!candidates.length) {
+        return null;
+      }
+      candidates.sort((a, b) => a.depth - b.depth);
+      return candidates[0].item;
+    }
+
+    pickManual(local) {
+      return this.pickPlacement(local, false);
+    }
+
+    placementsInColumn() {
+      const list = this.container
+        ? this.container.placements.slice(0, this.maxVisible)
+        : [];
+      return this.manualPlacements.concat(list);
+    }
+
+    climbToStackTop(support) {
+      const placements = this.placementsInColumn();
+      let current = support;
+      for (let guard = 0; guard < 64; guard += 1) {
+        const top = current.z + current.dz;
+        const above = placements.find(
+          (entry) =>
+            entry !== current &&
+            Math.abs(entry.z - top) <= 1 &&
+            footprintsOverlap(entry, current)
+        );
+        if (!above) {
+          break;
+        }
+        current = above;
+      }
+      return current;
+    }
+
+    updateManualCursor(local) {
+      if (this.addArmed) {
+        this.canvas.style.cursor = "";
+        return;
+      }
+      const hit = this.pickManual(local);
+      this.canvas.style.cursor = hit ? "move" : "";
+    }
+
+    beginManualDrag(event, item, local) {
+      const frontView = Math.abs(Math.sin(this.pitch)) < 0.12;
+      let mode = "plane";
+      if (event.shiftKey) {
+        mode = frontView ? "depth" : "vertical";
+      } else if (frontView) {
+        mode = "side";
+      }
+      const planePoint =
+        mode === "plane"
+          ? this.screenToWorldPlane(local.x, local.y, item.z)
+          : null;
+      if (mode === "plane" && !planePoint) {
+        mode = "side";
+      }
+      this.pointerId = event.pointerId;
+      this.manualDrag = {
+        pointerId: event.pointerId,
+        item,
+        mode,
+        startLocal: local,
+        startPos: { x: item.x, y: item.y, z: item.z },
+        grab: planePoint
+          ? { x: planePoint.x - item.x, y: planePoint.y - item.y }
+          : { x: 0, y: 0 },
+      };
+      this.capturePointer(event.pointerId);
+      this.canvas.style.cursor =
+        mode === "vertical" || mode === "depth" ? "ns-resize" : "move";
+      this.requestDraw();
+    }
+
+    moveManualDrag(local) {
+      const drag = this.manualDrag;
+      const template = this.template;
+      if (!drag || !template) {
+        return;
+      }
+      const item = drag.item;
+      const maxX = Math.max(0, template.width - item.dx);
+      const maxY = Math.max(0, template.length - item.dy);
+      const maxZ = Math.max(0, template.height - item.dz);
+      if (drag.mode === "plane") {
+        const point = this.screenToWorldPlane(local.x, local.y, drag.startPos.z);
+        if (point) {
+          item.x = clampValue(snapMm(point.x - drag.grab.x), 0, maxX);
+          item.y = clampValue(snapMm(point.y - drag.grab.y), 0, maxY);
+        }
+      } else if (drag.mode === "vertical") {
+        const deltaZ =
+          (drag.startLocal.y - local.y) * this.getMmPerPixel();
+        item.z = clampValue(snapMm(drag.startPos.z + deltaZ), 0, maxZ);
+      } else if (drag.mode === "side") {
+        const deltaX =
+          (local.x - drag.startLocal.x) * this.getSideMmPerPixel();
+        const deltaZ =
+          (drag.startLocal.y - local.y) * this.getMmPerPixel();
+        item.x = clampValue(snapMm(drag.startPos.x + deltaX), 0, maxX);
+        item.z = clampValue(snapMm(drag.startPos.z + deltaZ), 0, maxZ);
+      } else {
+        const deltaY =
+          (local.x - drag.startLocal.x) * this.getSideMmPerPixel();
+        item.y = clampValue(snapMm(drag.startPos.y + deltaY), 0, maxY);
+      }
+      this.requestDraw();
+    }
+
+    resolveDrop(local, draft) {
+      const template = this.template;
+      const maxX = Math.max(0, template.width - draft.dx);
+      const maxY = Math.max(0, template.length - draft.dy);
+      const maxZ = Math.max(0, template.height - draft.dz);
+      let z = 0;
+      let point = null;
+      const hit = this.pickPlacement(local, true);
+      const support = hit ? this.climbToStackTop(hit) : null;
+      if (support) {
+        const top = support.z + support.dz;
+        if (top + draft.dz <= template.height + 0.5) {
+          z = top;
+          point = {
+            x: support.x + support.dx / 2,
+            y: support.y + support.dy / 2,
+          };
+        }
+      }
+      if (!point) {
+        point = this.screenToWorldPlane(local.x, local.y, 0);
+      }
+      if (!point) {
+        point = { x: template.width / 2, y: template.length / 2 };
+      }
+      return {
+        x: clampValue(snapMm(point.x - draft.dx / 2), 0, maxX),
+        y: clampValue(snapMm(point.y - draft.dy / 2), 0, maxY),
+        z: clampValue(Math.round(z), 0, maxZ),
+      };
+    }
+
+    updateManualGhost(local) {
+      const template = this.template;
+      if (!template) {
+        return;
+      }
+      const draft = this.manualDraft;
+      this.manualGhost = {
+        ...this.resolveDrop(local, draft),
+        dx: draft.dx,
+        dy: draft.dy,
+        dz: draft.dz,
+      };
       this.requestDraw();
     }
 
@@ -1293,16 +1973,27 @@
 
       const template = this.template;
       const fitScale = this.getFitScale(template);
-      const visiblePlacements = this.container.placements.slice(
+      const planPlacements = this.container.placements.slice(
         0,
         this.maxVisible
       );
+      const manualPlacements = this.manualMode ? this.manualPlacements : [];
+      const visiblePlacements = manualPlacements.length
+        ? planPlacements.concat(manualPlacements)
+        : planPlacements;
       const faces = [];
 
       visiblePlacements.forEach((placement, index) => {
+        const isManual = placement.manual === true;
+        const baseColor = isManual
+          ? MANUAL_COLOR
+          : COLORS[placement.colorIndex % COLORS.length] ||
+            COLORS[index % COLORS.length];
         const color =
-          COLORS[placement.colorIndex % COLORS.length] || COLORS[index % COLORS.length];
-        if (placement.shape === "cylinder") {
+          this.manualMode && !isManual
+            ? blendColor(baseColor, 0.56)
+            : baseColor;
+        if (placement.shape === "cylinder" && !isManual) {
           this.createCylinderFaces(
             placement,
             color,
@@ -1311,6 +2002,7 @@
             faces
           );
         } else if (
+          !isManual &&
           Number(placement.baseHeight) > 0 &&
           placement.baseHeight < placement.dz
         ) {
@@ -1323,7 +2015,7 @@
                 z: placement.z,
                 dz: baseHeight,
               },
-              "#6f5439",
+              this.manualMode ? blendColor("#6f5439", 0.5) : "#6f5439",
               template,
               fitScale,
               faces
@@ -1347,6 +2039,22 @@
         }
       });
 
+      if (this.manualMode && this.manualGhost) {
+        const ghostFaces = [];
+        this.createBoxFaces(
+          this.manualGhost,
+          MANUAL_COLOR,
+          template,
+          fitScale,
+          ghostFaces
+        );
+        ghostFaces.forEach((face) => {
+          face.color = "rgba(201, 118, 45, 0.24)";
+          face.manual = true;
+        });
+        faces.push(...ghostFaces);
+      }
+
       faces.sort((a, b) => b.depth - a.depth);
       ctx.save();
       faces.forEach((face) => {
@@ -1356,6 +2064,8 @@
           ctx.lineTo(face.points[index].x, face.points[index].y);
         }
         ctx.closePath();
+        ctx.globalAlpha =
+          this.manualMode && face.manual !== true ? 0.3 : 1;
         ctx.fillStyle = face.color;
         ctx.fill();
         if (visiblePlacements.length <= 900) {
@@ -1364,16 +2074,114 @@
           ctx.stroke();
         }
       });
+      ctx.globalAlpha = 1;
       ctx.restore();
 
       this.drawContainerFrame(template, fitScale);
+      this.drawManualOverlay(template, fitScale);
       const degreesYaw = Math.round((this.yaw * 180) / Math.PI);
       const degreesPitch = Math.round((this.pitch * 180) / Math.PI);
-      const hiddenCount = this.container.placements.length - visiblePlacements.length;
+      const hiddenCount =
+        this.container.placements.length - planPlacements.length;
       elements.viewAngle.textContent =
         hiddenCount > 0
-          ? `示意 ${visiblePlacements.length} / ${this.container.placements.length} 件`
+          ? `示意 ${planPlacements.length} / ${this.container.placements.length} 件`
           : `视角 ${degreesYaw}° / ${degreesPitch}°`;
+    }
+
+    drawManualOverlay(template, fitScale) {
+      if (!this.manualMode) {
+        return;
+      }
+      const ctx = this.ctx;
+      const selected = this.manualPlacements.find(
+        (item) => item.id === this.selectedManualId
+      );
+      if (selected) {
+        const p = (x, y, z) =>
+          this.projectPoint({ x, y, z }, template, fitScale);
+        const footprint = [
+          p(selected.x, selected.y, selected.z),
+          p(selected.x + selected.dx, selected.y, selected.z),
+          p(selected.x + selected.dx, selected.y + selected.dy, selected.z),
+          p(selected.x, selected.y + selected.dy, selected.z),
+        ];
+        ctx.save();
+        ctx.setLineDash([5, 4]);
+        ctx.strokeStyle = "rgba(11, 111, 103, 0.72)";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(footprint[0].x, footprint[0].y);
+        footprint.slice(1).forEach((point) => {
+          ctx.lineTo(point.x, point.y);
+        });
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+        this.strokeBox(selected, template, fitScale, {
+          color: "rgba(11, 111, 103, 0.95)",
+          width: 2,
+          halo: "rgba(255, 255, 255, 0.85)",
+        });
+      }
+      if (this.manualGhost) {
+        this.strokeBox(this.manualGhost, template, fitScale, {
+          color: "rgba(11, 111, 103, 0.82)",
+          width: 1.4,
+          dash: [6, 4],
+          halo: "rgba(255, 255, 255, 0.6)",
+        });
+      }
+    }
+
+    strokeBox(box, template, fitScale, style) {
+      const ctx = this.ctx;
+      const p = (x, y, z) =>
+        this.projectPoint({ x, y, z }, template, fitScale);
+      const corners = [
+        p(box.x, box.y, box.z),
+        p(box.x + box.dx, box.y, box.z),
+        p(box.x + box.dx, box.y + box.dy, box.z),
+        p(box.x, box.y + box.dy, box.z),
+        p(box.x, box.y, box.z + box.dz),
+        p(box.x + box.dx, box.y, box.z + box.dz),
+        p(box.x + box.dx, box.y + box.dy, box.z + box.dz),
+        p(box.x, box.y + box.dy, box.z + box.dz),
+      ];
+      const edges = [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 0],
+        [4, 5],
+        [5, 6],
+        [6, 7],
+        [7, 4],
+        [0, 4],
+        [1, 5],
+        [2, 6],
+        [3, 7],
+      ];
+      ctx.save();
+      ctx.setLineDash(style.dash || []);
+      ctx.lineJoin = "round";
+      const trace = () => {
+        ctx.beginPath();
+        edges.forEach(([start, end]) => {
+          ctx.moveTo(corners[start].x, corners[start].y);
+          ctx.lineTo(corners[end].x, corners[end].y);
+        });
+        ctx.stroke();
+      };
+      if (style.halo) {
+        ctx.strokeStyle = style.halo;
+        ctx.lineWidth = (style.width || 1.5) + 2.6;
+        trace();
+      }
+      ctx.strokeStyle = style.color;
+      ctx.lineWidth = style.width || 1.5;
+      trace();
+      ctx.restore();
     }
 
     createBoxFaces(box, color, template, fitScale, output) {
@@ -1412,6 +2220,7 @@
           depth:
             projected.reduce((sum, point) => sum + point.depth, 0) /
             projected.length,
+          manual: Boolean(box.manual),
         });
       });
     }
@@ -1613,6 +2422,106 @@
     const convert = (channel) =>
       Math.max(0, Math.min(255, Math.round(channel * factor)));
     return `rgb(${convert(red)}, ${convert(green)}, ${convert(blue)})`;
+  }
+
+  function blendColor(hex, ratio) {
+    const normalized = hex.replace("#", "");
+    const value =
+      normalized.length === 3
+        ? normalized
+            .split("")
+            .map((character) => character + character)
+            .join("")
+        : normalized;
+    const red = Number.parseInt(value.slice(0, 2), 16);
+    const green = Number.parseInt(value.slice(2, 4), 16);
+    const blue = Number.parseInt(value.slice(4, 6), 16);
+    const mix = (channel) =>
+      Math.round(channel + (255 - channel) * ratio)
+        .toString(16)
+        .padStart(2, "0");
+    return `#${mix(red)}${mix(green)}${mix(blue)}`;
+  }
+
+  function clampValue(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function snapMm(value) {
+    return Math.round(value / MANUAL_SNAP_MM) * MANUAL_SNAP_MM;
+  }
+
+  function boxesOverlap(a, b, tolerance) {
+    const gap = tolerance === undefined ? 1 : tolerance;
+    return (
+      a.x < b.x + b.dx - gap &&
+      a.x + a.dx > b.x + gap &&
+      a.y < b.y + b.dy - gap &&
+      a.y + a.dy > b.y + gap &&
+      a.z < b.z + b.dz - gap &&
+      a.z + a.dz > b.z + gap
+    );
+  }
+
+  function footprintsOverlap(a, b, tolerance) {
+    const gap = tolerance === undefined ? 1 : tolerance;
+    return (
+      a.x < b.x + b.dx - gap &&
+      a.x + a.dx > b.x + gap &&
+      a.y < b.y + b.dy - gap &&
+      a.y + a.dy > b.y + gap
+    );
+  }
+
+  function convexHull(points) {
+    const sorted = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+    if (sorted.length < 3) {
+      return sorted;
+    }
+    const cross = (origin, a, b) =>
+      (a.x - origin.x) * (b.y - origin.y) -
+      (a.y - origin.y) * (b.x - origin.x);
+    const lower = [];
+    sorted.forEach((point) => {
+      while (
+        lower.length >= 2 &&
+        cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0
+      ) {
+        lower.pop();
+      }
+      lower.push(point);
+    });
+    const upper = [];
+    for (let index = sorted.length - 1; index >= 0; index -= 1) {
+      const point = sorted[index];
+      while (
+        upper.length >= 2 &&
+        cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0
+      ) {
+        upper.pop();
+      }
+      upper.push(point);
+    }
+    lower.pop();
+    upper.pop();
+    return lower.concat(upper);
+  }
+
+  function pointInPolygon(point, polygon) {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+      const xi = polygon[i].x;
+      const yi = polygon[i].y;
+      const xj = polygon[j].x;
+      const yj = polygon[j].y;
+      if (
+        yi > point.y !== yj > point.y &&
+        point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi
+      ) {
+        inside = !inside;
+      }
+    }
+    return inside;
   }
 
   let importDraft = null;
@@ -2683,6 +3592,57 @@
       renderer.setView(state.viewMode);
       saveState();
     });
+    elements.manualToggle.addEventListener("click", () =>
+      setManualMode(!state.manualMode)
+    );
+    elements.manualAddButton.addEventListener("click", () =>
+      setManualAddArmed(!renderer.addArmed)
+    );
+    elements.manualRotateButton.addEventListener("click", rotateSelectedManual);
+    elements.manualDropButton.addEventListener("click", dropSelectedManual);
+    elements.manualDeleteButton.addEventListener("click", deleteSelectedManual);
+    elements.manualClearButton.addEventListener("click", clearManualItems);
+    [
+      elements.manualLength,
+      elements.manualWidth,
+      elements.manualHeight,
+      elements.manualWeight,
+    ].forEach((input) => {
+      input.addEventListener("input", () => {
+        if (state.manualMode && renderer.addArmed) {
+          renderer.setManualDraft(readManualDraft());
+        }
+      });
+    });
+    document.addEventListener("keydown", (event) => {
+      if (!state.manualMode || !elements.importModal.hidden) {
+        return;
+      }
+      const tag = (event.target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") {
+        return;
+      }
+      if (event.key === "Escape") {
+        if (renderer.addArmed) {
+          setManualAddArmed(false);
+        } else {
+          renderer.selectManual(null);
+          refreshManualPanel();
+        }
+        return;
+      }
+      if (
+        (event.key === "Delete" || event.key === "Backspace") &&
+        renderer.selectedManualId
+      ) {
+        event.preventDefault();
+        deleteSelectedManual();
+        return;
+      }
+      if (event.key === "r" || event.key === "R") {
+        rotateSelectedManual();
+      }
+    });
     document.addEventListener("fullscreenchange", () => {
       window.setTimeout(() => renderer.resize(), 80);
     });
@@ -2710,6 +3670,12 @@
       elements.canvasWrap,
       elements.viewAngle
     );
+    renderer.onManualAdd = (position) => addManualAt(position);
+    renderer.onManualSelectionChange = () => refreshManualPanel();
+    renderer.onManualChange = () => {
+      refreshManualPanel();
+      saveState();
+    };
     renderer.setView(state.viewMode || "iso");
     showEmpty();
 
