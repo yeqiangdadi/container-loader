@@ -1,10 +1,10 @@
-const CACHE_NAME = "container-loader-v20";
+const CACHE_NAME = "container-loader-v30";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=12",
-  "./packing.js?v=20",
-  "./app.js?v=20",
+  "./styles.css?v=14",
+  "./packing.js?v=24",
+  "./app.js?v=30",
   "./xlsx.full.min.js",
   "./manifest.webmanifest",
   "./icon-192.png",
