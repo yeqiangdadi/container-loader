@@ -1052,6 +1052,12 @@
     return list.some((item) => item.source === "plan");
   }
 
+  let importReplaceAt = 0;
+
+  function importReplaceArmed() {
+    return Boolean(importReplaceAt) && Date.now() - importReplaceAt < 5000;
+  }
+
   function syncManualScene() {
     if (!renderer) {
       return;
@@ -1071,10 +1077,22 @@
       showToast("先进入手动微调，再导入自动方案。");
       return;
     }
-    if (manualItems().length) {
-      showToast("请先点「清空」，再导入自动方案。");
-      return;
+    const list = manualItems();
+    if (list.length) {
+      if (!importReplaceArmed()) {
+        importReplaceAt = Date.now();
+        refreshManualPanel();
+        showToast(`再点一次「替换」，将用自动方案覆盖当前 ${list.length} 件手动货物。`);
+        window.setTimeout(() => {
+          if (!importReplaceArmed()) {
+            importReplaceAt = 0;
+            refreshManualPanel();
+          }
+        }, 5200);
+        return;
+      }
     }
+    importReplaceAt = 0;
     const items = container.placements.map((placement, index) => ({
       ...placement,
       id: `plan-${index}-${createId()}`,
@@ -1090,7 +1108,11 @@
     syncManualScene();
     refreshManualPanel();
     saveState();
-    showToast(`已导入 ${items.length} 件自动方案，可拖动微调。`);
+    showToast(
+      list.length
+        ? `已用自动方案替换 ${list.length} 件手动货物（共 ${items.length} 件），可拖动微调。`
+        : `已导入 ${items.length} 件自动方案，可拖动微调。`
+    );
   }
 
   function readManualDraft() {
@@ -1127,6 +1149,10 @@
       return;
     }
     const list = manualItems();
+    const container = activeContainer();
+    const planCount = container && Array.isArray(container.placements)
+      ? container.placements.length
+      : 0;
     const selected = list.find((item) => item.id === renderer.selectedManualId);
     const imported = isManualImported(list);
     const rotateReady = selected && selected.shape !== "cylinder";
@@ -1134,12 +1160,24 @@
     elements.manualDropButton.disabled = !selected;
     elements.manualDeleteButton.disabled = !selected;
     elements.manualClearButton.disabled = !list.length;
-    elements.manualImportButton.disabled = list.length > 0;
+    elements.manualImportButton.disabled = planCount === 0;
+    elements.manualImportButton.textContent = !list.length
+      ? "⇩ 导入自动方案"
+      : importReplaceArmed()
+      ? `⇩ 再点一次替换 ${list.length} 件`
+      : "⇩ 用自动方案替换";
     if (!state.manualMode) {
       return;
     }
     if (renderer.addArmed) {
       elements.manualStatus.textContent = `已放置 ${list.length} 件 · 在柜内点击继续添加；点箱子顶部可叠放；Esc 退出`;
+      elements.manualStatus.classList.remove("warn");
+      return;
+    }
+    if (!list.length) {
+      elements.manualStatus.textContent = planCount
+        ? `还没有手动货物 · 点「导入自动方案」载入整柜 ${planCount} 件再拖动微调，或点「添加箱子」在柜内连续点击放置`
+        : "还没有手动货物 · 点「添加箱子」在柜内连续点击放置";
       elements.manualStatus.classList.remove("warn");
       return;
     }
