@@ -1058,6 +1058,19 @@
     return Boolean(importReplaceAt) && Date.now() - importReplaceAt < 5000;
   }
 
+  function invalidateManualCopies() {
+    if (!Object.keys(state.manualByTab).length) {
+      return;
+    }
+    state.manualByTab = {};
+    importReplaceAt = 0;
+    if (renderer) {
+      renderer.selectManual(null);
+      syncManualScene();
+      refreshManualPanel();
+    }
+  }
+
   function syncManualScene() {
     if (!renderer) {
       return;
@@ -3535,6 +3548,7 @@
         : incoming;
     importDraft = null;
     renderCargoRows();
+    invalidateManualCopies();
     saveState();
     closeImportModal();
     showToast(`已导入 ${incoming.length} 项货物，开始计算装柜方案。`);
@@ -3696,7 +3710,10 @@
         closeImportModal();
       }
     });
-    elements.calculateButton.addEventListener("click", calculate);
+    elements.calculateButton.addEventListener("click", () => {
+      invalidateManualCopies();
+      calculate();
+    });
     elements.installButton.addEventListener("click", installApp);
     elements.shareButton.addEventListener("click", sharePlan);
     elements.resetButton.addEventListener("click", resetApp);
