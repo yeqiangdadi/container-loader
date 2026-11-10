@@ -1240,6 +1240,15 @@
     }
     renderer.setManualMode(state.manualMode);
     renderer.setAddArmed(false);
+    if (
+      state.manualMode &&
+      !manualItems().length &&
+      activeContainer() &&
+      activeContainer().placements.length
+    ) {
+      importPlanToManual();
+      return;
+    }
     syncManualScene();
     refreshManualPanel();
     saveState();
