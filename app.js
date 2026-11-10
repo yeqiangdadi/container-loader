@@ -3,7 +3,7 @@
 
   const { CONTAINERS, planLoad, planLoadSequence } = window.ContainerPacking;
   const STORAGE_KEY = "container-loader-state-v2";
-  const MANUAL_COPY_VERSION = 2;
+  const MANUAL_COPY_VERSION = 3;
   const COLORS = [
     "#0b766e",
     "#2762b8",
@@ -1999,32 +1999,78 @@
       const maxX = Math.max(0, template.width - item.dx);
       const maxY = Math.max(0, template.length - item.dy);
       const maxZ = Math.max(0, template.height - item.dz);
+      const applyMove = (nextX, nextY, nextZ) => {
+        const candidates = [
+          { x: nextX, y: nextY, z: nextZ },
+          { x: nextX, y: nextY, z: item.z },
+          { x: nextX, y: item.y, z: nextZ },
+          { x: item.x, y: nextY, z: nextZ },
+          { x: nextX, y: item.y, z: item.z },
+          { x: item.x, y: nextY, z: item.z },
+          { x: item.x, y: item.y, z: nextZ },
+        ];
+        const wasBlocked = this.blockedAt(item, item.x, item.y, item.z);
+        const target = wasBlocked
+          ? candidates[0]
+          : candidates.find(
+              (candidate) => !this.blockedAt(item, candidate.x, candidate.y, candidate.z)
+            );
+        if (!target) {
+          return;
+        }
+        item.x = target.x;
+        item.y = target.y;
+        item.z = target.z;
+      };
       if (drag.mode === "plane") {
         const point = this.screenToWorldPlane(local.x, local.y, drag.startPos.z);
         if (point) {
-          item.x = clampValue(snapMm(point.x - drag.grab.x), 0, maxX);
-          item.y = clampValue(snapMm(point.y - drag.grab.y), 0, maxY);
+          applyMove(
+            clampValue(snapMm(point.x - drag.grab.x), 0, maxX),
+            clampValue(snapMm(point.y - drag.grab.y), 0, maxY),
+            item.z
+          );
           this.settleManualHeight(item);
         }
       } else if (drag.mode === "vertical") {
         const deltaZ =
           (drag.startLocal.y - local.y) * this.getMmPerPixel();
-        item.z = clampValue(snapMm(drag.startPos.z + deltaZ), 0, maxZ);
-        item.z = this.snapToSupport(item, item.z);
+        const nextZ = this.snapToSupport(
+          item,
+          clampValue(snapMm(drag.startPos.z + deltaZ), 0, maxZ)
+        );
+        applyMove(item.x, item.y, nextZ);
       } else if (drag.mode === "side") {
         const deltaX =
           (local.x - drag.startLocal.x) * this.getSideMmPerPixel();
         const deltaZ =
           (drag.startLocal.y - local.y) * this.getMmPerPixel();
-        item.x = clampValue(snapMm(drag.startPos.x + deltaX), 0, maxX);
-        item.z = clampValue(snapMm(drag.startPos.z + deltaZ), 0, maxZ);
-        item.z = this.snapToSupport(item, item.z);
+        const nextX = clampValue(snapMm(drag.startPos.x + deltaX), 0, maxX);
+        const nextZ = this.snapToSupport(
+          item,
+          clampValue(snapMm(drag.startPos.z + deltaZ), 0, maxZ)
+        );
+        applyMove(nextX, item.y, nextZ);
       } else {
         const deltaY =
           (local.x - drag.startLocal.x) * this.getSideMmPerPixel();
-        item.y = clampValue(snapMm(drag.startPos.y + deltaY), 0, maxY);
+        applyMove(
+          item.x,
+          clampValue(snapMm(drag.startPos.y + deltaY), 0, maxY),
+          item.z
+        );
       }
       this.requestDraw();
+    }
+
+    blockedAt(item, x, y, z) {
+      const probe = { x, y, z, dx: item.dx, dy: item.dy, dz: item.dz };
+      return this.placementsInColumn().some((other) => {
+        if (other === item) {
+          return false;
+        }
+        return boxesOverlap(probe, other);
+      });
     }
 
     supportTops(item) {
