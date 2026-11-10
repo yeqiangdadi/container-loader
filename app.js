@@ -1011,11 +1011,13 @@
 
     if (renderer) {
       renderer.setContainer(container, container.container || result.container);
-      syncManualScene();
+      if (!ensureManualPlanLoaded()) {
+        syncManualScene();
+        refreshManualPanel();
+      }
       if (renderer.addArmed) {
         setManualAddArmed(false);
       }
-      refreshManualPanel();
     }
     saveState();
   }
@@ -1073,6 +1075,18 @@
       syncManualScene();
       refreshManualPanel();
     }
+  }
+
+  function ensureManualPlanLoaded() {
+    if (!state.manualMode || !renderer || manualItems().length) {
+      return false;
+    }
+    const container = activeContainer();
+    if (!container || !container.placements.length) {
+      return false;
+    }
+    importPlanToManual();
+    return true;
   }
 
   function syncManualScene() {
@@ -1257,13 +1271,7 @@
     }
     renderer.setManualMode(state.manualMode);
     renderer.setAddArmed(false);
-    if (
-      state.manualMode &&
-      !manualItems().length &&
-      activeContainer() &&
-      activeContainer().placements.length
-    ) {
-      importPlanToManual();
+    if (ensureManualPlanLoaded()) {
       return;
     }
     syncManualScene();
