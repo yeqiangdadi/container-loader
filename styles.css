@@ -1096,6 +1096,10 @@ svg {
   background: var(--accent-soft);
 }
 
+.manual-button.wide {
+  grid-column: 1 / -1;
+}
+
 .manual-button.quiet {
   color: var(--muted);
 }
