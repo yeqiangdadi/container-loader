@@ -3,6 +3,7 @@
 
   const { CONTAINERS, planLoad, planLoadSequence } = window.ContainerPacking;
   const STORAGE_KEY = "container-loader-state-v2";
+  const MANUAL_COPY_VERSION = 2;
   const COLORS = [
     "#0b766e",
     "#2762b8",
@@ -283,7 +284,9 @@
         result: null,
         manualMode: false,
         manualByTab:
-          saved.manualByTab && typeof saved.manualByTab === "object"
+          saved.manualVersion === MANUAL_COPY_VERSION &&
+          saved.manualByTab &&
+          typeof saved.manualByTab === "object"
             ? saved.manualByTab
             : {},
       };
@@ -305,6 +308,7 @@
           autoGroup: state.autoGroup,
           activeTab: state.activeTab,
           viewMode: state.viewMode,
+          manualVersion: MANUAL_COPY_VERSION,
           manualByTab: state.manualByTab,
         })
       );
