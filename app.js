@@ -2004,11 +2004,13 @@
         if (point) {
           item.x = clampValue(snapMm(point.x - drag.grab.x), 0, maxX);
           item.y = clampValue(snapMm(point.y - drag.grab.y), 0, maxY);
+          this.settleManualHeight(item);
         }
       } else if (drag.mode === "vertical") {
         const deltaZ =
           (drag.startLocal.y - local.y) * this.getMmPerPixel();
         item.z = clampValue(snapMm(drag.startPos.z + deltaZ), 0, maxZ);
+        item.z = this.snapToSupport(item, item.z);
       } else if (drag.mode === "side") {
         const deltaX =
           (local.x - drag.startLocal.x) * this.getSideMmPerPixel();
@@ -2016,12 +2018,65 @@
           (drag.startLocal.y - local.y) * this.getMmPerPixel();
         item.x = clampValue(snapMm(drag.startPos.x + deltaX), 0, maxX);
         item.z = clampValue(snapMm(drag.startPos.z + deltaZ), 0, maxZ);
+        item.z = this.snapToSupport(item, item.z);
       } else {
         const deltaY =
           (local.x - drag.startLocal.x) * this.getSideMmPerPixel();
         item.y = clampValue(snapMm(drag.startPos.y + deltaY), 0, maxY);
       }
       this.requestDraw();
+    }
+
+    supportTops(item) {
+      const tops = [0];
+      this.placementsInColumn().forEach((other) => {
+        if (other === item || !footprintsOverlap(other, item)) {
+          return;
+        }
+        tops.push(other.z + other.dz);
+      });
+      return tops;
+    }
+
+    snapToSupport(item, z) {
+      let best = null;
+      this.supportTops(item).forEach((top) => {
+        if (best === null || Math.abs(top - z) < Math.abs(best - z)) {
+          best = top;
+        }
+      });
+      if (best === null || Math.abs(best - z) > 120) {
+        return z;
+      }
+      const template = this.template;
+      const maxZ = template ? Math.max(0, template.height - item.dz) : z;
+      return clampValue(snapMm(best), 0, maxZ);
+    }
+
+    settleManualHeight(item) {
+      const template = this.template;
+      if (!template) {
+        return;
+      }
+      const tops = this.supportTops(item);
+      const below = Math.max(...tops.filter((top) => top <= item.z + 0.5));
+      const target = clampValue(
+        snapMm(below),
+        0,
+        Math.max(0, template.height - item.dz)
+      );
+      const collides = this.placementsInColumn().some((other) => {
+        if (other === item || !footprintsOverlap(other, item)) {
+          return false;
+        }
+        return (
+          other.z < target + item.dz - 0.5 && other.z + other.dz > target + 0.5
+        );
+      });
+      if (collides) {
+        return;
+      }
+      item.z = target;
     }
 
     resolveDrop(local, draft) {
