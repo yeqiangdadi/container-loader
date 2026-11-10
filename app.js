@@ -96,6 +96,7 @@
     importListButton: document.querySelector("#importListButton"),
     exportListButton: document.querySelector("#exportListButton"),
     downloadTemplateButton: document.querySelector("#downloadTemplateButton"),
+    exampleButton: document.querySelector("#exampleButton"),
     importModal: document.querySelector("#importModal"),
     importCloseButton: document.querySelector("#importCloseButton"),
     importCancelButton: document.querySelector("#importCancelButton"),
@@ -2825,6 +2826,15 @@
     "数量(件)", "单件重量(kg)", "允许叠放", "顶部可承重(kg)", "旋转规则", "只放柜底", "必须上层",
   ];
 
+  const EXAMPLE_ROWS = [
+    { sku: "A001", name: "阀门纸箱", packageType: "carton", length: 600, width: 400, height: 400, quantity: 180, weight: 12, topLoadKg: 50, rotation: "all" },
+    { sku: "A002", name: "管件纸箱", packageType: "carton", length: 800, width: 600, height: 500, quantity: 60, weight: 25, rotation: "upright" },
+    { sku: "B001", name: "法兰木箱", packageType: "wooden", length: 1200, width: 1000, height: 900, quantity: 12, weight: 180, rotation: "fixed" },
+    { sku: "C001", name: "钢管捆包", packageType: "bundle", length: 5800, width: 300, height: 300, quantity: 8, weight: 420, rotation: "upright" },
+    { sku: "D001", name: "管件托盘", packageType: "pallet", length: 1200, width: 1000, height: 1150, quantity: 10, weight: 260, rotation: "upright" },
+    { sku: "E001", name: "钢卷", packageType: "cylinder", length: 1200, width: 500, height: 500, diameter: 500, cylinderLength: 1200, cylinderAxis: "length", quantity: 20, weight: 150, rotation: "upright" },
+  ];
+
   const PACKAGE_TYPE_MATCHES = [
     ["纸箱", "carton"], ["carton", "carton"],
     ["木箱", "wooden"], ["木架", "wooden"], ["wooden", "wooden"], ["木", "wooden"],
@@ -3668,6 +3678,23 @@
     calculate();
   }
 
+  function loadExampleList() {
+    state.rows = EXAMPLE_ROWS.map((row) => ({
+      ...DEFAULT_ROW,
+      ...row,
+      id: createId(),
+    }));
+    state.container = { ...CONTAINERS["40HQ"] };
+    state.planMode = "single";
+    state.autoGroup = true;
+    setContainerInputs();
+    renderCargoRows();
+    invalidateManualCopies();
+    calculate();
+    showToast("已载入示例清单：6 种货物 290 件，已按 40HQ 计算。");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function buildListAoa() {
     const aoa = [TEMPLATE_HEAD];
     collectRows().forEach((row) => {
@@ -3774,6 +3801,7 @@
     elements.importListButton.addEventListener("click", openImportModal);
     elements.exportListButton.addEventListener("click", exportCargoList);
     elements.downloadTemplateButton.addEventListener("click", downloadTemplate);
+    elements.exampleButton.addEventListener("click", loadExampleList);
     elements.importCloseButton.addEventListener("click", closeImportModal);
     elements.importCancelButton.addEventListener("click", closeImportModal);
     elements.importApplyButton.addEventListener("click", applyImport);
