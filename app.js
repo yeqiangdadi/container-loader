@@ -161,6 +161,7 @@
     manualWidth: document.querySelector("#manualWidth"),
     manualHeight: document.querySelector("#manualHeight"),
     manualWeight: document.querySelector("#manualWeight"),
+    manualImportButton: document.querySelector("#manualImportButton"),
     manualAddButton: document.querySelector("#manualAddButton"),
     manualRotateButton: document.querySelector("#manualRotateButton"),
     manualDropButton: document.querySelector("#manualDropButton"),
@@ -1006,9 +1007,7 @@
 
     if (renderer) {
       renderer.setContainer(container, container.container || result.container);
-      renderer.setManualPlacements(
-        state.manualMode ? manualItems() : []
-      );
+      syncManualScene();
       if (renderer.addArmed) {
         setManualAddArmed(false);
       }
@@ -1049,6 +1048,51 @@
     return state.manualByTab[key];
   }
 
+  function isManualImported(list) {
+    return list.some((item) => item.source === "plan");
+  }
+
+  function syncManualScene() {
+    if (!renderer) {
+      return;
+    }
+    const list = manualItems();
+    const imported = state.manualMode && isManualImported(list);
+    renderer.setPlanHidden(imported);
+    renderer.setManualPlacements(state.manualMode ? list : []);
+  }
+
+  function importPlanToManual() {
+    const container = activeContainer();
+    if (!container || !renderer) {
+      return;
+    }
+    if (!state.manualMode) {
+      showToast("先进入手动微调，再导入自动方案。");
+      return;
+    }
+    if (manualItems().length) {
+      showToast("请先点「清空」，再导入自动方案。");
+      return;
+    }
+    const items = container.placements.map((placement, index) => ({
+      ...placement,
+      id: `plan-${index}-${createId()}`,
+      manual: true,
+      source: "plan",
+    }));
+    if (!items.length) {
+      showToast("本柜没有可导入的自动摆放货物。");
+      return;
+    }
+    state.manualByTab[String(state.activeTab)] = items;
+    renderer.selectManual(null);
+    syncManualScene();
+    refreshManualPanel();
+    saveState();
+    showToast(`已导入 ${items.length} 件自动方案，可拖动微调。`);
+  }
+
   function readManualDraft() {
     const dx = Math.max(50, Math.round(numberValue(elements.manualLength.value, 1200)));
     const dy = Math.max(50, Math.round(numberValue(elements.manualWidth.value, 1000)));
@@ -1062,7 +1106,7 @@
     if (!container) {
       return 0;
     }
-    const plan = container.placements;
+    const plan = isManualImported(list) ? [] : container.placements;
     const hits = new Set();
     list.forEach((item, index) => {
       if (plan.some((entry) => boxesOverlap(item, entry))) {
@@ -1082,17 +1126,18 @@
     if (!renderer) {
       return;
     }
-    const selected = manualItems().find(
-      (item) => item.id === renderer.selectedManualId
-    );
-    elements.manualRotateButton.disabled = !selected;
+    const list = manualItems();
+    const selected = list.find((item) => item.id === renderer.selectedManualId);
+    const imported = isManualImported(list);
+    const rotateReady = selected && selected.shape !== "cylinder";
+    elements.manualRotateButton.disabled = !rotateReady;
     elements.manualDropButton.disabled = !selected;
     elements.manualDeleteButton.disabled = !selected;
-    elements.manualClearButton.disabled = !manualItems().length;
+    elements.manualClearButton.disabled = !list.length;
+    elements.manualImportButton.disabled = list.length > 0;
     if (!state.manualMode) {
       return;
     }
-    const list = manualItems();
     if (renderer.addArmed) {
       elements.manualStatus.textContent = `已放置 ${list.length} 件 · 在柜内点击继续添加；点箱子顶部可叠放；Esc 退出`;
       elements.manualStatus.classList.remove("warn");
@@ -1105,16 +1150,30 @@
       0
     );
     const overlaps = manualOverlaps(list);
+    const template = manualTemplate();
+    const ratio =
+      template && template.width && template.length && template.height
+        ? volume / ((template.width * template.length * template.height) / 1e9)
+        : 0;
     const parts = [
-      `手动 ${list.length} 件 · ${volume.toFixed(3)} CBM · ${Math.round(weight)} kg`,
+      `${imported ? "微调" : "手动"} ${list.length} 件 · ${volume.toFixed(3)} CBM${
+        imported ? `（占柜容 ${Math.round(ratio * 100)}%）` : ""
+      } · ${Math.round(weight)} kg`,
     ];
     if (overlaps > 0) {
-      parts.push(`与计划/手动货物重叠 ${overlaps} 件（仅演示，不影响计算）`);
+      parts.push(
+        imported
+          ? `与相邻货物重叠 ${overlaps} 件`
+          : `与计划/手动货物重叠 ${overlaps} 件（仅演示，不影响计算）`
+      );
     }
     if (selected) {
       parts.push(
         `选中：X ${Math.round(selected.x)} / Y ${Math.round(selected.y)} / Z ${Math.round(selected.z)} mm`
       );
+    }
+    if (imported && !selected) {
+      parts.push("拖动货物微调位置，Delete 删除");
     }
     elements.manualStatus.textContent = parts.join(" · ");
     elements.manualStatus.classList.toggle("warn", overlaps > 0);
@@ -1143,7 +1202,7 @@
     }
     renderer.setManualMode(state.manualMode);
     renderer.setAddArmed(false);
-    renderer.setManualPlacements(state.manualMode ? manualItems() : []);
+    syncManualScene();
     refreshManualPanel();
     saveState();
   }
@@ -1211,6 +1270,10 @@
     if (!item || !template) {
       return;
     }
+    if (item.shape === "cylinder") {
+      showToast("圆柱类货物不支持 90° 旋转，可删除后重新放置。");
+      return;
+    }
     const centerX = item.x + item.dx / 2;
     const centerY = item.y + item.dy / 2;
     const dx = item.dy;
@@ -1251,7 +1314,7 @@
     }
     list.splice(index, 1);
     renderer.selectManual(null);
-    renderer.setManualPlacements(list);
+    syncManualScene();
     refreshManualPanel();
     saveState();
   }
@@ -1263,10 +1326,10 @@
     }
     list.length = 0;
     renderer.selectManual(null);
-    renderer.setManualPlacements(list);
+    syncManualScene();
     refreshManualPanel();
     saveState();
-    showToast("已清空本柜的手动演示货物。");
+    showToast("已清空本柜的手动摆放，恢复自动方案。");
   }
 
   function exportCsv() {
@@ -1419,6 +1482,7 @@
       this.height = 0;
       this.maxVisible = 1800;
       this.manualMode = false;
+      this.planHidden = false;
       this.manualPlacements = [];
       this.manualDraft = { dx: 1200, dy: 1000, dz: 1000 };
       this.selectedManualId = null;
@@ -1609,6 +1673,15 @@
       this.requestDraw();
     }
 
+    setPlanHidden(hidden) {
+      const next = Boolean(hidden);
+      if (this.planHidden === next) {
+        return;
+      }
+      this.planHidden = next;
+      this.requestDraw();
+    }
+
     setManualDraft(draft) {
       if (!draft) {
         return;
@@ -1762,7 +1835,7 @@
         }
       };
       this.manualPlacements.forEach(collect);
-      if (includePlan && this.container) {
+      if (includePlan && this.container && !this.planHidden) {
         this.container.placements.slice(0, this.maxVisible).forEach(collect);
       }
       if (!candidates.length) {
@@ -1777,9 +1850,10 @@
     }
 
     placementsInColumn() {
-      const list = this.container
-        ? this.container.placements.slice(0, this.maxVisible)
-        : [];
+      const list =
+        this.container && !this.planHidden
+          ? this.container.placements.slice(0, this.maxVisible)
+          : [];
       return this.manualPlacements.concat(list);
     }
 
@@ -1973,10 +2047,9 @@
 
       const template = this.template;
       const fitScale = this.getFitScale(template);
-      const planPlacements = this.container.placements.slice(
-        0,
-        this.maxVisible
-      );
+      const planPlacements = this.planHidden
+        ? []
+        : this.container.placements.slice(0, this.maxVisible);
       const manualPlacements = this.manualMode ? this.manualPlacements : [];
       const visiblePlacements = manualPlacements.length
         ? planPlacements.concat(manualPlacements)
@@ -1985,15 +2058,21 @@
 
       visiblePlacements.forEach((placement, index) => {
         const isManual = placement.manual === true;
-        const baseColor = isManual
-          ? MANUAL_COLOR
-          : COLORS[placement.colorIndex % COLORS.length] ||
-            COLORS[index % COLORS.length];
+        const imported = placement.source === "plan";
+        const faceStart = faces.length;
+        const paletteColor =
+          COLORS[placement.colorIndex % COLORS.length] ||
+          COLORS[index % COLORS.length];
+        const baseColor = imported
+          ? paletteColor
+          : isManual
+            ? MANUAL_COLOR
+            : paletteColor;
         const color =
           this.manualMode && !isManual
             ? blendColor(baseColor, 0.56)
             : baseColor;
-        if (placement.shape === "cylinder" && !isManual) {
+        if (placement.shape === "cylinder") {
           this.createCylinderFaces(
             placement,
             color,
@@ -2002,7 +2081,6 @@
             faces
           );
         } else if (
-          !isManual &&
           Number(placement.baseHeight) > 0 &&
           placement.baseHeight < placement.dz
         ) {
@@ -2036,6 +2114,9 @@
           }
         } else {
           this.createBoxFaces(placement, color, template, fitScale, faces);
+        }
+        for (let faceIndex = faceStart; faceIndex < faces.length; faceIndex += 1) {
+          faces[faceIndex].manual = isManual;
         }
       });
 
@@ -2083,10 +2164,14 @@
       const degreesPitch = Math.round((this.pitch * 180) / Math.PI);
       const hiddenCount =
         this.container.placements.length - planPlacements.length;
-      elements.viewAngle.textContent =
-        hiddenCount > 0
-          ? `示意 ${planPlacements.length} / ${this.container.placements.length} 件`
-          : `视角 ${degreesYaw}° / ${degreesPitch}°`;
+      if (this.planHidden) {
+        elements.viewAngle.textContent = `手动微调 ${manualPlacements.length} 件`;
+      } else {
+        elements.viewAngle.textContent =
+          hiddenCount > 0
+            ? `示意 ${planPlacements.length} / ${this.container.placements.length} 件`
+            : `视角 ${degreesYaw}° / ${degreesPitch}°`;
+      }
     }
 
     drawManualOverlay(template, fitScale) {
@@ -3602,6 +3687,7 @@
     elements.manualDropButton.addEventListener("click", dropSelectedManual);
     elements.manualDeleteButton.addEventListener("click", deleteSelectedManual);
     elements.manualClearButton.addEventListener("click", clearManualItems);
+    elements.manualImportButton.addEventListener("click", importPlanToManual);
     [
       elements.manualLength,
       elements.manualWidth,
