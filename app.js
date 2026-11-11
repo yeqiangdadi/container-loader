@@ -1138,14 +1138,14 @@
       return;
     }
     state.manualByTab[String(state.activeTab)] = items;
-    renderer.selectManual(null);
     syncManualScene();
+    renderer.selectManual(items[0].id);
     refreshManualPanel();
     saveState();
     showToast(
       list.length
-        ? `已用自动方案替换 ${list.length} 件手动货物（共 ${items.length} 件），可拖动微调。`
-        : `已导入 ${items.length} 件自动方案，可拖动微调。`
+        ? `已用自动方案替换 ${list.length} 件手动货物（共 ${items.length} 件），已选中 1 件，点其他货物可切换。`
+        : `已导入 ${items.length} 件自动方案，已选中 1 件，点其他货物可切换。`
     );
   }
 
@@ -1246,8 +1246,8 @@
         `选中：X ${Math.round(selected.x)} / Y ${Math.round(selected.y)} / Z ${Math.round(selected.z)} mm`
       );
     }
-    if (imported && !selected) {
-      parts.push("拖动货物微调位置，Delete 删除");
+    if (!selected) {
+      parts.push("点柜内任一货物选中，可旋转/升高/降低/落地/删除");
     }
     elements.manualStatus.textContent = parts.join(" · ");
     elements.manualStatus.classList.toggle("warn", overlaps > 0);
@@ -1280,6 +1280,12 @@
       return;
     }
     syncManualScene();
+    if (state.manualMode && !renderer.selectedManualId) {
+      const list = manualItems();
+      if (list.length) {
+        renderer.selectManual(list[0].id);
+      }
+    }
     refreshManualPanel();
     saveState();
   }
@@ -1351,6 +1357,7 @@
       showToast("圆柱类货物不支持 90° 旋转，可删除后重新放置。");
       return;
     }
+    const prev = { x: item.x, y: item.y, dx: item.dx, dy: item.dy, z: item.z };
     const centerX = item.x + item.dx / 2;
     const centerY = item.y + item.dy / 2;
     const dx = item.dy;
@@ -1361,6 +1368,11 @@
     item.y = clampValue(centerY - dy / 2, 0, Math.max(0, template.length - dy));
     if (item.z + item.dz > template.height) {
       item.z = Math.max(0, template.height - item.dz);
+    }
+    if (renderer.blockedAt(item, item.x, item.y, item.z)) {
+      Object.assign(item, prev);
+      showToast("旋转后会与相邻货物重叠，先挪开一点再旋转。");
+      return;
     }
     renderer.requestDraw();
     refreshManualPanel();
@@ -1406,6 +1418,10 @@
   function dropSelectedManual() {
     const item = selectedManualItem();
     if (!item) {
+      return;
+    }
+    if (renderer.blockedAt(item, item.x, item.y, 0)) {
+      showToast("柜底这个位置被其他货物占着，先平移到空位再落地。");
       return;
     }
     item.z = 0;
