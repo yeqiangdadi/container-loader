@@ -163,6 +163,7 @@
     manualWidth: document.querySelector("#manualWidth"),
     manualHeight: document.querySelector("#manualHeight"),
     manualWeight: document.querySelector("#manualWeight"),
+    manualCargoSelect: document.querySelector("#manualCargoSelect"),
     manualImportButton: document.querySelector("#manualImportButton"),
     manualAddButton: document.querySelector("#manualAddButton"),
     manualRotateButton: document.querySelector("#manualRotateButton"),
@@ -551,6 +552,7 @@
       .join("");
 
     elements.cargoCount.textContent = `${state.rows.length} 项`;
+    renderManualCargoOptions();
     updateEstimate();
   }
 
@@ -1061,6 +1063,112 @@
     return list.some((item) => item.source === "plan");
   }
 
+  let manualCargoPick = "";
+
+  function cargoPickRow() {
+    if (manualCargoPick === "") {
+      return null;
+    }
+    return state.rows[Number(manualCargoPick)] || null;
+  }
+
+  function rowCylinderSizes(row) {
+    const axis = row.cylinderAxis || "length";
+    const diameter =
+      numberValue(row.diameter, 0) ||
+      Math.min(
+        numberValue(row.width, 0) || numberValue(row.length, 0) || 500,
+        numberValue(row.height, 0) || numberValue(row.width, 0) || 500
+      );
+    const length =
+      numberValue(row.cylinderLength, 0) ||
+      (axis === "width"
+        ? numberValue(row.length, 0)
+        : axis === "height"
+        ? numberValue(row.height, 0)
+        : numberValue(row.length, 0)) ||
+      diameter;
+    return { diameter, length, axis };
+  }
+
+  function cargoInputDims(row) {
+    if (row.packageType === "cylinder") {
+      const sizes = rowCylinderSizes(row);
+      return {
+        dx: Math.round(sizes.length),
+        dy: Math.round(sizes.diameter),
+        dz: Math.round(sizes.diameter),
+      };
+    }
+    return {
+      dx: Math.round(numberValue(row.length, 0)) || 1200,
+      dy: Math.round(numberValue(row.width, 0)) || 1000,
+      dz: Math.round(numberValue(row.height, 0)) || 1000,
+    };
+  }
+
+  function renderManualCargoOptions() {
+    if (!elements.manualCargoSelect) {
+      return;
+    }
+    const options = ['<option value="">自定义尺寸</option>'].concat(
+      state.rows.map((row, index) => {
+        const dims = cargoInputDims(row);
+        const label = `${row.sku || "未编号"} ${row.name || `货物 ${index + 1}`} · ${dims.dx}×${dims.dy}×${dims.dz}`;
+        return `<option value="${index}">${escapeHtml(label)}</option>`;
+      })
+    );
+    elements.manualCargoSelect.innerHTML = options.join("");
+    if (manualCargoPick !== "" && !state.rows[Number(manualCargoPick)]) {
+      manualCargoPick = "";
+    }
+    elements.manualCargoSelect.value = manualCargoPick;
+  }
+
+  function applyCargoPick() {
+    const row = cargoPickRow();
+    if (!row) {
+      return;
+    }
+    const dims = cargoInputDims(row);
+    elements.manualLength.value = String(dims.dx);
+    elements.manualWidth.value = String(dims.dy);
+    elements.manualHeight.value = String(dims.dz);
+    const weight = numberValue(row.weight, 0);
+    if (weight > 0) {
+      elements.manualWeight.value = String(Math.round(weight));
+    }
+    if (state.manualMode && renderer) {
+      renderer.setManualDraft(manualBoxFromDraft(readManualDraft()));
+    }
+  }
+
+  function manualBoxFromDraft(draft) {
+    const cargo = cargoPickRow();
+    if (!(cargo && cargo.packageType === "cylinder")) {
+      return { dx: draft.dx, dy: draft.dy, dz: draft.dz, weight: draft.weight };
+    }
+    const axis = cargo.cylinderAxis || "length";
+    const diameter = draft.dy || draft.dz || draft.dx;
+    const length = draft.dx;
+    let dims;
+    if (axis === "height") {
+      dims = { dx: diameter, dy: diameter, dz: length };
+    } else if (axis === "width") {
+      dims = { dx: length, dy: diameter, dz: diameter };
+    } else {
+      dims = { dx: diameter, dy: length, dz: diameter };
+    }
+    return {
+      ...dims,
+      weight: draft.weight,
+      shape: "cylinder",
+      diameter,
+      cylinderLength: length,
+      cylinderAxis: axis,
+    };
+  }
+
   let importReplaceAt = 0;
 
   function importReplaceArmed() {
@@ -1189,8 +1297,7 @@
       : 0;
     const selected = list.find((item) => item.id === renderer.selectedManualId);
     const imported = isManualImported(list);
-    const rotateReady = selected && selected.shape !== "cylinder";
-    elements.manualRotateButton.disabled = !rotateReady;
+    elements.manualRotateButton.disabled = !selected;
     elements.manualRaiseButton.disabled = !selected;
     elements.manualLowerButton.disabled = !selected;
     elements.manualDropButton.disabled = !selected;
@@ -1206,14 +1313,14 @@
       return;
     }
     if (renderer.addArmed) {
-      elements.manualStatus.textContent = `已放置 ${list.length} 件 · 在柜内点击继续添加；点箱子顶部可叠放；Esc 退出`;
+      elements.manualStatus.textContent = `已放置 ${list.length} 件 · 在柜内点击继续添加；点货物顶部可叠放；Esc 退出`;
       elements.manualStatus.classList.remove("warn");
       return;
     }
     if (!list.length) {
       elements.manualStatus.textContent = planCount
-        ? `还没有手动货物 · 点「导入自动方案」载入整柜 ${planCount} 件再拖动微调，或点「添加箱子」在柜内连续点击放置`
-        : "还没有手动货物 · 点「添加箱子」在柜内连续点击放置";
+        ? `还没有手动货物 · 点「导入自动方案」载入整柜 ${planCount} 件再拖动微调，或点「添加货物」在柜内连续点击放置`
+        : "还没有手动货物 · 在「添加货物」里选类型后点柜内放置";
       elements.manualStatus.classList.remove("warn");
       return;
     }
@@ -1266,12 +1373,13 @@
     );
     elements.manualPanel.hidden = !state.manualMode;
     elements.canvasWrap.classList.toggle("manual-mode", state.manualMode);
+    renderManualCargoOptions();
     if (!renderer) {
       return;
     }
     if (!state.manualMode) {
       elements.manualAddButton.classList.remove("armed");
-      elements.manualAddButton.textContent = "＋ 添加箱子";
+      elements.manualAddButton.textContent = "＋ 添加货物";
       elements.canvasWrap.classList.remove("manual-add");
     }
     renderer.setManualMode(state.manualMode);
@@ -1295,14 +1403,14 @@
       return;
     }
     elements.manualAddButton.classList.toggle("armed", armed);
-    elements.manualAddButton.textContent = armed ? "完成添加" : "＋ 添加箱子";
+    elements.manualAddButton.textContent = armed ? "完成添加" : "＋ 添加货物";
     elements.canvasWrap.classList.toggle("manual-add", armed);
     if (armed && renderer.viewMode === "front") {
       state.viewMode = "iso";
       renderer.setView("iso");
       saveState();
     }
-    renderer.setManualDraft(readManualDraft());
+    renderer.setManualDraft(manualBoxFromDraft(readManualDraft()));
     renderer.setAddArmed(armed);
     refreshManualPanel();
   }
@@ -1314,24 +1422,37 @@
       return;
     }
     const draft = readManualDraft();
+    const box = manualBoxFromDraft(draft);
     const list = manualItems();
+    const cargo = cargoPickRow();
     const item = {
       id: `manual-${createId()}`,
-      itemId: "manual",
-      name: `手动箱 ${list.length + 1}`,
+      itemId: cargo ? cargo.sku || "manual" : "manual",
+      sku: cargo ? cargo.sku || "" : "",
+      name: cargo
+        ? cargo.name || `货物 ${Number(manualCargoPick) + 1}`
+        : `手动货物 ${list.length + 1}`,
       manual: true,
-      x: clampValue(position.x, 0, Math.max(0, template.width - draft.dx)),
-      y: clampValue(position.y, 0, Math.max(0, template.length - draft.dy)),
-      z: clampValue(position.z, 0, Math.max(0, template.height - draft.dz)),
-      dx: draft.dx,
-      dy: draft.dy,
-      dz: draft.dz,
-      weight: draft.weight,
-      colorIndex: list.length % COLORS.length,
+      shape: box.shape || "box",
+      x: clampValue(position.x, 0, Math.max(0, template.width - box.dx)),
+      y: clampValue(position.y, 0, Math.max(0, template.length - box.dy)),
+      z: clampValue(position.z, 0, Math.max(0, template.height - box.dz)),
+      dx: box.dx,
+      dy: box.dy,
+      dz: box.dz,
+      weight: box.weight,
+      colorIndex: cargo
+        ? Number(manualCargoPick) % COLORS.length
+        : list.length % COLORS.length,
     };
+    if (box.shape === "cylinder") {
+      item.diameter = box.diameter;
+      item.cylinderLength = box.cylinderLength;
+      item.cylinderAxis = box.cylinderAxis;
+    }
     list.push(item);
     renderer.setManualPlacements(list);
-    renderer.setManualDraft(draft);
+    renderer.setManualDraft(box);
     renderer.selectManual(item.id);
     refreshManualPanel();
     saveState();
@@ -1353,19 +1474,67 @@
     if (!item || !template) {
       return;
     }
-    if (item.shape === "cylinder") {
-      showToast("圆柱类货物不支持 90° 旋转，可删除后重新放置。");
-      return;
-    }
-    const prev = { x: item.x, y: item.y, dx: item.dx, dy: item.dy, z: item.z };
+    const prev = {
+      x: item.x,
+      y: item.y,
+      z: item.z,
+      dx: item.dx,
+      dy: item.dy,
+      dz: item.dz,
+      cylinderAxis: item.cylinderAxis,
+      diameter: item.diameter,
+      cylinderLength: item.cylinderLength,
+    };
     const centerX = item.x + item.dx / 2;
     const centerY = item.y + item.dy / 2;
-    const dx = item.dy;
-    const dy = item.dx;
-    item.dx = dx;
-    item.dy = dy;
-    item.x = clampValue(centerX - dx / 2, 0, Math.max(0, template.width - dx));
-    item.y = clampValue(centerY - dy / 2, 0, Math.max(0, template.length - dy));
+    if (item.shape === "cylinder") {
+      const axis =
+        item.cylinderAxis === "width" || item.cylinderAxis === "height"
+          ? item.cylinderAxis
+          : "length";
+      const diameter = Math.max(
+        1,
+        Number(item.diameter) || Math.min(item.dx, item.dy, item.dz)
+      );
+      const length = Math.max(
+        1,
+        Number(item.cylinderLength) ||
+          (axis === "height" ? item.dz : axis === "width" ? item.dx : item.dy)
+      );
+      const nextAxis =
+        axis === "length" ? "width" : axis === "width" ? "height" : "length";
+      item.cylinderAxis = nextAxis;
+      item.diameter = diameter;
+      item.cylinderLength = length;
+      if (nextAxis === "height") {
+        item.dx = diameter;
+        item.dy = diameter;
+        item.dz = length;
+      } else if (nextAxis === "width") {
+        item.dx = length;
+        item.dy = diameter;
+        item.dz = diameter;
+      } else {
+        item.dx = diameter;
+        item.dy = length;
+        item.dz = diameter;
+      }
+    } else {
+      const dx = item.dy;
+      const dy = item.dx;
+      item.dx = dx;
+      item.dy = dy;
+    }
+    item.x = clampValue(
+      centerX - item.dx / 2,
+      0,
+      Math.max(0, template.width - item.dx)
+    );
+    item.y = clampValue(
+      centerY - item.dy / 2,
+      0,
+      Math.max(0, template.length - item.dy)
+    );
     if (item.z + item.dz > template.height) {
       item.z = Math.max(0, template.height - item.dz);
     }
@@ -4002,10 +4171,16 @@
     ].forEach((input) => {
       input.addEventListener("input", () => {
         if (state.manualMode && renderer.addArmed) {
-          renderer.setManualDraft(readManualDraft());
+          renderer.setManualDraft(manualBoxFromDraft(readManualDraft()));
         }
       });
     });
+    if (elements.manualCargoSelect) {
+      elements.manualCargoSelect.addEventListener("change", (event) => {
+        manualCargoPick = event.target.value;
+        applyCargoPick();
+      });
+    }
     document.addEventListener("keydown", (event) => {
       if (!state.manualMode || !elements.importModal.hidden) {
         return;
