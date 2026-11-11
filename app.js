@@ -166,6 +166,8 @@
     manualImportButton: document.querySelector("#manualImportButton"),
     manualAddButton: document.querySelector("#manualAddButton"),
     manualRotateButton: document.querySelector("#manualRotateButton"),
+    manualRaiseButton: document.querySelector("#manualRaiseButton"),
+    manualLowerButton: document.querySelector("#manualLowerButton"),
     manualDropButton: document.querySelector("#manualDropButton"),
     manualDeleteButton: document.querySelector("#manualDeleteButton"),
     manualClearButton: document.querySelector("#manualClearButton"),
@@ -1189,6 +1191,8 @@
     const imported = isManualImported(list);
     const rotateReady = selected && selected.shape !== "cylinder";
     elements.manualRotateButton.disabled = !rotateReady;
+    elements.manualRaiseButton.disabled = !selected;
+    elements.manualLowerButton.disabled = !selected;
     elements.manualDropButton.disabled = !selected;
     elements.manualDeleteButton.disabled = !selected;
     elements.manualClearButton.disabled = !list.length;
@@ -1358,6 +1362,42 @@
     if (item.z + item.dz > template.height) {
       item.z = Math.max(0, template.height - item.dz);
     }
+    renderer.requestDraw();
+    refreshManualPanel();
+    saveState();
+  }
+
+  function nudgeSelectedManual(direction) {
+    const item = selectedManualItem();
+    const template = manualTemplate();
+    if (!item || !renderer || !template) {
+      return;
+    }
+    const step = 200;
+    const maxZ = Math.max(0, template.height - item.dz);
+    let target = clampValue(snapMm(item.z + direction * step), 0, maxZ);
+    if (direction < 0) {
+      const below = renderer
+        .supportTops(item)
+        .filter((top) => top < item.z - 1 && top >= target - 60)
+        .sort((a, b) => b - a)[0];
+      if (below !== undefined) {
+        target = below;
+      }
+    }
+    if (Math.abs(target - item.z) < 1) {
+      showToast(direction > 0 ? "已经到柜顶，无法再升高。" : "已经在柜底，无法再降低。");
+      return;
+    }
+    if (renderer.blockedAt(item, item.x, item.y, target)) {
+      showToast(
+        direction > 0
+          ? "上方有货物挡住，先平移到空位再升高。"
+          : "下方有货物挡住，无法降低。"
+      );
+      return;
+    }
+    item.z = target;
     renderer.requestDraw();
     refreshManualPanel();
     saveState();
@@ -2026,11 +2066,18 @@
       if (drag.mode === "plane") {
         const point = this.screenToWorldPlane(local.x, local.y, drag.startPos.z);
         if (point) {
-          applyMove(
-            clampValue(snapMm(point.x - drag.grab.x), 0, maxX),
-            clampValue(snapMm(point.y - drag.grab.y), 0, maxY),
-            item.z
-          );
+          const nextX = clampValue(snapMm(point.x - drag.grab.x), 0, maxX);
+          const nextY = clampValue(snapMm(point.y - drag.grab.y), 0, maxY);
+          const lift = this.blockedAt(item, nextX, nextY, item.z)
+            ? this.liftSupportTop(item, nextX, nextY)
+            : null;
+          if (lift === null) {
+            applyMove(nextX, nextY, item.z);
+          } else {
+            item.x = nextX;
+            item.y = nextY;
+            item.z = lift;
+          }
           this.settleManualHeight(item);
         }
       } else if (drag.mode === "vertical") {
@@ -2083,6 +2130,38 @@
         tops.push(other.z + other.dz);
       });
       return tops;
+    }
+
+    liftSupportTop(item, x, y) {
+      const template = this.template;
+      if (!template) {
+        return null;
+      }
+      const probe = { x, y, dx: item.dx, dy: item.dy };
+      const tops = [];
+      this.placementsInColumn().forEach((other) => {
+        if (other === item || !footprintsOverlap(probe, other)) {
+          return;
+        }
+        const overlapX =
+          Math.min(x + item.dx, other.x + other.dx) - Math.max(x, other.x);
+        const overlapY =
+          Math.min(y + item.dy, other.y + other.dy) - Math.max(y, other.y);
+        const smaller = Math.min(item.dx * item.dy, other.dx * other.dy);
+        if (!smaller || (overlapX * overlapY) / smaller < 0.45) {
+          return;
+        }
+        tops.push(other.z + other.dz);
+      });
+      return (
+        tops
+          .filter(
+            (top) =>
+              top > item.z + 0.5 && top + item.dz <= template.height + 0.5
+          )
+          .sort((a, b) => a - b)
+          .find((top) => !this.blockedAt(item, x, y, top)) ?? null
+      );
     }
 
     snapToSupport(item, z) {
@@ -3889,6 +3968,12 @@
       setManualAddArmed(!renderer.addArmed)
     );
     elements.manualRotateButton.addEventListener("click", rotateSelectedManual);
+    elements.manualRaiseButton.addEventListener("click", () =>
+      nudgeSelectedManual(1)
+    );
+    elements.manualLowerButton.addEventListener("click", () =>
+      nudgeSelectedManual(-1)
+    );
     elements.manualDropButton.addEventListener("click", dropSelectedManual);
     elements.manualDeleteButton.addEventListener("click", deleteSelectedManual);
     elements.manualClearButton.addEventListener("click", clearManualItems);
