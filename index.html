@@ -16,7 +16,7 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon-192.png" type="image/png" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=16" />
+    <link rel="stylesheet" href="./styles.css?v=17" />
   </head>
   <body>
     <div class="app-shell">
@@ -332,6 +332,7 @@
                       <span id="manualStatus">导入自动方案后拖动货物，或手动添加箱子</span>
                     </div>
                     <div class="manual-form">
+                      <label class="manual-cargo">添加货物<select id="manualCargoSelect" aria-label="选择要添加的货物"><option value="">自定义尺寸</option></select></label>
                       <label>长 mm<input id="manualLength" type="number" min="50" step="50" value="1200" /></label>
                       <label>宽 mm<input id="manualWidth" type="number" min="50" step="50" value="1000" /></label>
                       <label>高 mm<input id="manualHeight" type="number" min="50" step="50" value="1000" /></label>
@@ -339,7 +340,7 @@
                     </div>
                     <div class="manual-actions">
                       <button class="manual-button primary wide" id="manualImportButton" type="button">⇩ 导入自动方案</button>
-                      <button class="manual-button" id="manualAddButton" type="button">＋ 添加箱子</button>
+                      <button class="manual-button" id="manualAddButton" type="button">＋ 添加货物</button>
                       <button class="manual-button" id="manualRotateButton" type="button">旋转 90°</button>
                       <button class="manual-button" id="manualRaiseButton" type="button" title="每按一次升高 200 mm，撞到上方货物会提示">↑ 升高</button>
                       <button class="manual-button" id="manualLowerButton" type="button" title="每按一次降低 200 mm">↓ 降低</button>
@@ -347,7 +348,7 @@
                       <button class="manual-button" id="manualDeleteButton" type="button">删除</button>
                       <button class="manual-button quiet" id="manualClearButton" type="button">清空</button>
                     </div>
-                    <p class="manual-hint">拖动平移，压到别的货物上会自动叠放 · 选中后用「↑ 升高 / ↓ 降低」调高度（触屏可用） · Shift+拖动微调 · Delete 删除 · Esc 退出</p>
+                    <p class="manual-hint">点柜内货物即选中，按钮只作用于选中的这件 · 「添加货物」放计划外货物：先选类型再点柜内 · 拖动平移，压到货物上自动叠放 · Shift+拖动微调 · Esc 退出</p>
                   </div>
                 </div>
               </section>
@@ -547,6 +548,6 @@ A002	纸箱B	800	600	500	120	25"></textarea>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./xlsx.full.min.js"></script>
     <script src="./packing.js?v=24"></script>
-    <script src="./app.js?v=41"></script>
+    <script src="./app.js?v=42"></script>
   </body>
 </html>
