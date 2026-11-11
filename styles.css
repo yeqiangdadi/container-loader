@@ -1053,6 +1053,28 @@ svg {
   border-color: var(--accent);
 }
 
+.manual-form .manual-cargo {
+  grid-column: 1 / -1;
+}
+
+.manual-form select {
+  width: 100%;
+  min-width: 0;
+  height: 27px;
+  padding: 0 6px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 11px;
+}
+
+.manual-form select:focus {
+  outline: 2px solid rgba(11, 111, 103, 0.18);
+  border-color: var(--accent);
+}
+
 .manual-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
