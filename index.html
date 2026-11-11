@@ -341,11 +341,13 @@
                       <button class="manual-button primary wide" id="manualImportButton" type="button">⇩ 导入自动方案</button>
                       <button class="manual-button" id="manualAddButton" type="button">＋ 添加箱子</button>
                       <button class="manual-button" id="manualRotateButton" type="button">旋转 90°</button>
+                      <button class="manual-button" id="manualRaiseButton" type="button" title="每按一次升高 200 mm，撞到上方货物会提示">↑ 升高</button>
+                      <button class="manual-button" id="manualLowerButton" type="button" title="每按一次降低 200 mm">↓ 降低</button>
                       <button class="manual-button" id="manualDropButton" type="button">落地</button>
                       <button class="manual-button" id="manualDeleteButton" type="button">删除</button>
                       <button class="manual-button quiet" id="manualClearButton" type="button">清空</button>
                     </div>
-                    <p class="manual-hint">拖动货物平移，拖到低处自动落下 · Shift+拖动调高度/深度 · Delete 删除 · Esc 退出</p>
+                    <p class="manual-hint">拖动平移，压到别的货物上会自动叠放 · 选中后用「↑ 升高 / ↓ 降低」调高度（触屏可用） · Shift+拖动微调 · Delete 删除 · Esc 退出</p>
                   </div>
                 </div>
               </section>
@@ -545,6 +547,6 @@ A002	纸箱B	800	600	500	120	25"></textarea>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./xlsx.full.min.js"></script>
     <script src="./packing.js?v=24"></script>
-    <script src="./app.js?v=39"></script>
+    <script src="./app.js?v=40"></script>
   </body>
 </html>
