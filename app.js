@@ -169,6 +169,11 @@
     manualRotateButton: document.querySelector("#manualRotateButton"),
     manualRaiseButton: document.querySelector("#manualRaiseButton"),
     manualLowerButton: document.querySelector("#manualLowerButton"),
+    manualWidthMinus: document.querySelector("#manualWidthMinus"),
+    manualWidthPlus: document.querySelector("#manualWidthPlus"),
+    manualLengthMinus: document.querySelector("#manualLengthMinus"),
+    manualLengthPlus: document.querySelector("#manualLengthPlus"),
+    labelToggle: document.querySelector("#labelToggle"),
     manualDropButton: document.querySelector("#manualDropButton"),
     manualDeleteButton: document.querySelector("#manualDeleteButton"),
     manualClearButton: document.querySelector("#manualClearButton"),
@@ -202,6 +207,7 @@
       viewMode: "iso",
       manualMode: false,
       manualByTab: {},
+      showLabels: false,
     };
   }
 
@@ -285,6 +291,7 @@
         planMode: saved.planMode === "mix" ? "mix" : "single",
         mixBigCount: Math.max(1, Number(saved.mixBigCount) || 2),
         autoGroup: saved.autoGroup !== false,
+        showLabels: saved.showLabels === true,
         result: null,
         manualMode: false,
         manualByTab:
@@ -312,6 +319,7 @@
           autoGroup: state.autoGroup,
           activeTab: state.activeTab,
           viewMode: state.viewMode,
+          showLabels: state.showLabels === true,
           manualVersion: MANUAL_COPY_VERSION,
           manualByTab: state.manualByTab,
         })
@@ -447,7 +455,7 @@
               </div>
             `;
         return `
-          <article class="cargo-row" data-index="${index}" style="--row-color:${color}">
+          <article class="cargo-row" data-index="${index}" data-package-type="${row.packageType || "carton"}" style="--row-color:${color}">
             <div class="cargo-row-head">
               <div class="cargo-index">
                 <i class="color-dot" style="background:${color}"></i>
@@ -636,16 +644,19 @@
     }
 
     if (field === "packageType") {
+      const previous = rowElement.dataset.packageType || row.packageType;
       if (row.packageType === "cylinder") {
-        row.diameter =
-          numberValue(row.diameter, 0) ||
-          Math.max(numberValue(row.width, 0), numberValue(row.height, 0));
-        row.cylinderLength =
-          numberValue(row.cylinderLength, 0) || numberValue(row.length, 0);
-      } else {
-        row.length = numberValue(row.length, 0) || row.cylinderLength;
-        row.width = numberValue(row.width, 0) || row.diameter;
-        row.height = numberValue(row.height, 0) || row.diameter;
+        const width = numberValue(row.width, 0);
+        const height = numberValue(row.height, 0);
+        const length = numberValue(row.length, 0);
+        // Derive from this row's box size, not stale diameter defaults.
+        row.diameter = Math.max(1, Math.min(width || height || 400, height || width || 400));
+        row.cylinderLength = Math.max(1, length || width || height || 400);
+      } else if (previous === "cylinder") {
+        const diameter = Math.max(1, numberValue(row.diameter, 0) || 400);
+        row.length = Math.max(1, numberValue(row.cylinderLength, 0) || diameter);
+        row.width = diameter;
+        row.height = diameter;
       }
       if (["wooden", "pallet"].includes(row.packageType)) {
         row.baseHeight = numberValue(row.baseHeight, 0) || 100;
@@ -655,7 +666,13 @@
         row.baseHeight = 0;
       }
       renderCargoRows();
+      invalidateManualCopies();
       saveState();
+      if (state.manualMode) {
+        setManualMode(false);
+      }
+      // Shapes changed: the saved plan (and any manual copy) is stale until recalculated.
+      calculate();
       return;
     }
 
@@ -1123,6 +1140,9 @@
       manualCargoPick = "";
     }
     elements.manualCargoSelect.value = manualCargoPick;
+    if (manualCargoPick !== "" && state.rows[Number(manualCargoPick)]) {
+      applyCargoPick();
+    }
   }
 
   function applyCargoPick() {
@@ -1300,6 +1320,10 @@
     elements.manualRotateButton.disabled = !selected;
     elements.manualRaiseButton.disabled = !selected;
     elements.manualLowerButton.disabled = !selected;
+    elements.manualWidthMinus.disabled = !selected;
+    elements.manualWidthPlus.disabled = !selected;
+    elements.manualLengthMinus.disabled = !selected;
+    elements.manualLengthPlus.disabled = !selected;
     elements.manualDropButton.disabled = !selected;
     elements.manualDeleteButton.disabled = !selected;
     elements.manualClearButton.disabled = !list.length;
@@ -1548,14 +1572,37 @@
     saveState();
   }
 
-  function nudgeSelectedManual(direction) {
+  function nudgeSelectedManual(axis, direction) {
     const item = selectedManualItem();
     const template = manualTemplate();
     if (!item || !renderer || !template) {
       return;
     }
+    if (axis === "x" || axis === "y") {
+      const step = 100;
+      const isX = axis === "x";
+      const max = Math.max(0, (isX ? template.width - item.dx : template.length - item.dy));
+      const before = isX ? item.x : item.y;
+      const target = clampValue(snapMm(before + direction * step), 0, max);
+      if (Math.abs(target - before) < 1) {
+        showToast(isX ? "已经贴到柜壁，无法再平移。" : "已经贴到柜头或柜门，无法再平移。");
+        return;
+      }
+      const nextX = isX ? target : item.x;
+      const nextY = isX ? item.y : target;
+      if (renderer.blockedAt(item, nextX, nextY, item.z)) {
+        showToast("这个方向被其他货物挡住，先升高越过再平移。");
+        return;
+      }
+      item.x = nextX;
+      item.y = nextY;
+      renderer.requestDraw();
+      refreshManualPanel();
+      saveState();
+      return;
+    }
     const step = 200;
-    const maxZ = Math.max(0, template.height - item.dz);
+    const maxZ = Math.max(0, template.height);
     let target = clampValue(snapMm(item.z + direction * step), 0, maxZ);
     if (direction < 0) {
       const below = renderer
@@ -1786,6 +1833,7 @@
       this.selectedManualId = null;
       this.addArmed = false;
       this.manualGhost = null;
+      this.showLabels = false;
       this.manualDrag = null;
       this.onManualAdd = null;
       this.onManualSelectionChange = null;
@@ -1985,6 +2033,11 @@
         return;
       }
       this.manualDraft = { ...draft };
+      this.requestDraw();
+    }
+
+    setShowLabels(show) {
+      this.showLabels = Boolean(show);
       this.requestDraw();
     }
 
@@ -2224,7 +2277,8 @@
       const item = drag.item;
       const maxX = Math.max(0, template.width - item.dx);
       const maxY = Math.max(0, template.length - item.dy);
-      const maxZ = Math.max(0, template.height - item.dz);
+      // Bottom may be lifted to the ceiling so a box can clear a stack and be swapped.
+      const maxZ = Math.max(0, template.height);
       const applyMove = (nextX, nextY, nextZ) => {
         const candidates = [
           { x: nextX, y: nextY, z: nextZ },
@@ -2433,6 +2487,10 @@
         dx: draft.dx,
         dy: draft.dy,
         dz: draft.dz,
+        shape: draft.shape,
+        diameter: draft.diameter,
+        cylinderLength: draft.cylinderLength,
+        cylinderAxis: draft.cylinderAxis,
       };
       this.requestDraw();
     }
@@ -2556,17 +2614,44 @@
         for (let faceIndex = faceStart; faceIndex < faces.length; faceIndex += 1) {
           faces[faceIndex].manual = isManual;
         }
+        if (this.showLabels && visiblePlacements.length <= 900) {
+          const anchor = this.projectPoint(
+            {
+              x: placement.x + placement.dx / 2,
+              y: placement.y + placement.dy / 2,
+              z: placement.z + placement.dz,
+            },
+            template,
+            fitScale
+          );
+          faces.push({
+            points: [anchor],
+            label: String(index + 1),
+            depth: anchor.depth - 0.2,
+            manual: isManual,
+          });
+        }
       });
 
       if (this.manualMode && this.manualGhost) {
         const ghostFaces = [];
-        this.createBoxFaces(
-          this.manualGhost,
-          MANUAL_COLOR,
-          template,
-          fitScale,
-          ghostFaces
-        );
+        if (this.manualGhost.shape === "cylinder") {
+          this.createCylinderFaces(
+            this.manualGhost,
+            MANUAL_COLOR,
+            template,
+            fitScale,
+            ghostFaces
+          );
+        } else {
+          this.createBoxFaces(
+            this.manualGhost,
+            MANUAL_COLOR,
+            template,
+            fitScale,
+            ghostFaces
+          );
+        }
         ghostFaces.forEach((face) => {
           face.color = "rgba(201, 118, 45, 0.24)";
           face.manual = true;
@@ -2577,6 +2662,22 @@
       faces.sort((a, b) => b.depth - a.depth);
       ctx.save();
       faces.forEach((face) => {
+        if (face.label !== undefined) {
+          const point = face.points[0];
+          const dimmed = this.manualMode && face.manual !== true;
+          ctx.globalAlpha = dimmed ? 0.5 : 1;
+          ctx.font =
+            '700 10px "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif';
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          ctx.strokeText(face.label, point.x, point.y);
+          ctx.fillStyle = "#1b2a39";
+          ctx.fillText(face.label, point.x, point.y);
+          ctx.globalAlpha = 1;
+          return;
+        }
         ctx.beginPath();
         ctx.moveTo(face.points[0].x, face.points[0].y);
         for (let index = 1; index < face.points.length; index += 1) {
@@ -4154,11 +4255,30 @@
     );
     elements.manualRotateButton.addEventListener("click", rotateSelectedManual);
     elements.manualRaiseButton.addEventListener("click", () =>
-      nudgeSelectedManual(1)
+      nudgeSelectedManual("z", 1)
     );
     elements.manualLowerButton.addEventListener("click", () =>
-      nudgeSelectedManual(-1)
+      nudgeSelectedManual("z", -1)
     );
+    elements.manualWidthMinus.addEventListener("click", () =>
+      nudgeSelectedManual("x", -1)
+    );
+    elements.manualWidthPlus.addEventListener("click", () =>
+      nudgeSelectedManual("x", 1)
+    );
+    elements.manualLengthMinus.addEventListener("click", () =>
+      nudgeSelectedManual("y", -1)
+    );
+    elements.manualLengthPlus.addEventListener("click", () =>
+      nudgeSelectedManual("y", 1)
+    );
+    elements.labelToggle.addEventListener("change", (event) => {
+      state.showLabels = event.target.checked;
+      if (renderer) {
+        renderer.setShowLabels(state.showLabels);
+      }
+      saveState();
+    });
     elements.manualDropButton.addEventListener("click", dropSelectedManual);
     elements.manualDeleteButton.addEventListener("click", deleteSelectedManual);
     elements.manualClearButton.addEventListener("click", clearManualItems);
@@ -4243,6 +4363,10 @@
       refreshManualPanel();
       saveState();
     };
+    renderer.setShowLabels(state.showLabels === true);
+    if (elements.labelToggle) {
+      elements.labelToggle.checked = state.showLabels === true;
+    }
     renderer.setView(state.viewMode || "iso");
     showEmpty();
 
