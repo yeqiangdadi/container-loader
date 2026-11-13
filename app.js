@@ -855,6 +855,40 @@
     }));
   }
 
+  function applyBoxNumbers(result) {
+    if (!result || !result.ok) {
+      return;
+    }
+    const rowsById = new Map();
+    state.rows.forEach((row, index) => {
+      rowsById.set(row.id || `row-${index + 1}`, row);
+    });
+    const cursors = new Map();
+    result.containers.forEach((container) => {
+      (container.placements || []).forEach((placement) => {
+        const row = rowsById.get(placement.itemId);
+        if (!row) {
+          return;
+        }
+        const piece = cursors.get(placement.itemId) || 0;
+        cursors.set(placement.itemId, piece + 1);
+        if (Array.isArray(row.boxNos) && row.boxNos[piece]) {
+          placement.boxNo = row.boxNos[piece];
+        } else if (row.boxNoStart !== undefined && row.boxNoStart !== null) {
+          placement.boxNo = formatBoxNo(
+            {
+              prefix: row.boxNoPrefix || "",
+              start: row.boxNoStart,
+              suffix: row.boxNoSuffix || "",
+              width: Number(row.boxNoWidth) || 0,
+            },
+            piece
+          );
+        }
+      });
+    });
+  }
+
   function calculate() {
     const rows = collectRows();
     const result =
@@ -864,6 +898,7 @@
             laneClearance: 100,
           })
         : planLoad(rows, state.container);
+    applyBoxNumbers(result);
     state.result = result;
     state.activeTab = 0;
     saveState();
@@ -953,6 +988,18 @@
     return state.result.items.find((item) => item.id === itemId);
   }
 
+  function boxRangeFor(container, itemId) {
+    const labels = (container.placements || [])
+      .filter((placement) => placement.itemId === itemId && placement.boxNo)
+      .map((placement) => placement.boxNo);
+    if (!labels.length) {
+      return "";
+    }
+    return labels.length === 1
+      ? labels[0]
+      : `${labels[0]} ~ ${labels[labels.length - 1]}`;
+  }
+
   function renderActiveContainer() {
     const result = state.result;
     if (!result || !result.ok || !result.containers.length) {
@@ -1022,6 +1069,7 @@
               </div>
             </td>
             <td>${formatInteger(entry.count)}</td>
+            <td>${escapeHtml(boxRangeFor(container, entry.itemId))}</td>
             <td>${escapeHtml(entry.orientation)}</td>
             <td>${escapeHtml(entry.supportDescription)}</td>
             <td>${formatNumber(entry.cbm, 3)} CBM</td>
@@ -1684,7 +1732,7 @@
     }
 
     const rows = [
-      ["柜号", "货号", "名称", "件数", "摆法", "体积(CBM)", "重量(kg)"],
+      ["柜号", "货号", "名称", "件数", "箱号", "摆法", "体积(CBM)", "重量(kg)"],
     ];
     state.result.containers.forEach((container) => {
       container.summary.forEach((entry) => {
@@ -1694,6 +1742,7 @@
           item ? item.sku : "",
           entry.name,
           entry.count,
+          boxRangeFor(container, entry.itemId),
           entry.orientation,
           entry.cbm.toFixed(3),
           entry.weight.toFixed(1),
@@ -1706,6 +1755,7 @@
       "",
       "",
       state.result.totals.units,
+      "",
       "",
       state.result.totals.cbm.toFixed(3),
       state.result.totals.weight.toFixed(1),
@@ -2626,7 +2676,10 @@
           );
           faces.push({
             points: [anchor],
-            label: String(index + 1),
+            label:
+              placement.boxNo !== undefined && placement.boxNo !== null
+                ? String(placement.boxNo)
+                : String(index + 1),
             depth: anchor.depth - 0.2,
             manual: isManual,
           });
@@ -3151,7 +3204,8 @@
   let importDraft = null;
 
   const IMPORT_FIELD_ALIASES = {
-    sku: ["货号", "型号", "编号", "编码", "箱号", "sku", "skucode", "code", "artno", "itemno", "partno", "ctnno", "cartonno"],
+    boxNo: ["no", "序号", "箱号", "件号", "包装号", "箱号no", "pkgno", "packageno", "caseno", "ctnno", "cartonno"],
+    sku: ["货号", "型号", "编号", "编码", "sku", "skucode", "code", "artno", "itemno", "partno"],
     name: ["名称", "货名", "品名", "货物名称", "品名规格", "货描", "货物描述", "name", "item", "itemname", "description", "desc", "product"],
     packageType: ["包装类型", "包装", "包装方式", "类型", "packagetype", "package", "packing"],
     cylinderLength: ["圆柱长度", "管长", "管子长度", "筒长", "cylinderlength", "pipelength", "pipelong"],
@@ -3359,6 +3413,35 @@
     return record;
   }
 
+  function parseBoxNoParts(value) {
+    const text = String(value == null ? "" : value).trim();
+    if (!text) {
+      return null;
+    }
+    const match = text.match(/^(.*?)(\d+)(\D*)$/);
+    if (!match) {
+      return { prefix: "", start: null, suffix: text, width: 0 };
+    }
+    return {
+      prefix: match[1].trim(),
+      start: Number(match[2]),
+      suffix: match[3].trim(),
+      width: match[2].length,
+    };
+  }
+
+  function formatBoxNo(parts, offset) {
+    if (!parts) {
+      return "";
+    }
+    if (parts.start === null || parts.start === undefined) {
+      return parts.suffix || "";
+    }
+    const number = String(parts.start + offset);
+    const padded = parts.width > 1 ? number.padStart(parts.width, "0") : number;
+    return `${parts.prefix || ""}${padded}${parts.suffix || ""}`;
+  }
+
   function parseSupportValue(value) {
     return parseSupportRequired(value);
   }
@@ -3531,6 +3614,11 @@
     const rawPackageType = String(record.packageType ?? "").trim();
     const matchedType = matchPackageType(rawPackageType);
     let name = String(record.name ?? "").trim();
+    const quantity =
+      meaning === "perRow"
+        ? 1
+        : Math.max(1, Math.round(plain("quantity")) || 1);
+    const boxParts = parseBoxNoParts(record.boxNo);
     const row = {
       id: createId(),
       sku: String(record.sku ?? "").trim(),
@@ -3551,12 +3639,18 @@
       supportRequired: parseSupportValue(record.supportRequired),
       onlyBottom: coerceBool(record.onlyBottom) === true,
       onlyTop: coerceBool(record.onlyTop) === true,
-      quantity:
-        meaning === "perRow"
-          ? 1
-          : Math.max(1, Math.round(plain("quantity")) || 1),
+      quantity,
       rotation: matchRotation(record.rotation),
     };
+    if (boxParts) {
+      row.boxNoStart = boxParts.start;
+      row.boxNoPrefix = boxParts.prefix;
+      row.boxNoSuffix = boxParts.suffix;
+      row.boxNoWidth = boxParts.width;
+      row.boxNos = Array.from({ length: quantity }, (_, piece) =>
+        formatBoxNo(boxParts, piece)
+      );
+    }
 
     // 装箱单里 Item 列常是纯序号：优先用第二名称列（TYPE / 描述），再用类型描述
     if ((!name || /^\d+(\.\d+)?$/.test(name)) && record.__nameAlt) {
@@ -3631,7 +3725,11 @@
           row.weight,
         ].join("|");
         if (merged.has(key)) {
-          merged.get(key).quantity += 1;
+          const target = merged.get(key);
+          target.quantity += 1;
+          if (row.boxNos && row.boxNos.length) {
+            target.boxNos = (target.boxNos || []).concat(row.boxNos);
+          }
         } else {
           merged.set(key, row);
         }
@@ -4328,6 +4426,36 @@
       }
       if (event.key === "r" || event.key === "R") {
         rotateSelectedManual();
+        return;
+      }
+      if (!renderer.selectedManualId) {
+        return;
+      }
+      if (event.shiftKey && event.key === "ArrowUp") {
+        event.preventDefault();
+        nudgeSelectedManual("z", 1);
+        return;
+      }
+      if (event.shiftKey && event.key === "ArrowDown") {
+        event.preventDefault();
+        nudgeSelectedManual("z", -1);
+        return;
+      }
+      if (event.key === "PageUp" || event.key === "PageDown") {
+        event.preventDefault();
+        nudgeSelectedManual("z", event.key === "PageUp" ? 1 : -1);
+        return;
+      }
+      const arrowMoves = {
+        ArrowLeft: ["x", -1],
+        ArrowRight: ["x", 1],
+        ArrowUp: ["y", -1],
+        ArrowDown: ["y", 1],
+      };
+      const arrowMove = arrowMoves[event.key];
+      if (arrowMove) {
+        event.preventDefault();
+        nudgeSelectedManual(arrowMove[0], arrowMove[1]);
       }
     });
     document.addEventListener("fullscreenchange", () => {
