@@ -90,7 +90,6 @@
 
   function uniqueOrientations(item) {
     const clearance = Math.max(0, Number(item.clearance) || 0);
-    let dimensions;
 
     if (item.shape === "cylinder") {
       const diameter = Math.max(
@@ -104,26 +103,57 @@
           Number(item.height) ||
           1
       ) + clearance;
-      if (item.cylinderAxis === "width") {
-        dimensions = [length, diameter, diameter];
-      } else if (item.cylinderAxis === "height") {
-        dimensions = [diameter, diameter, length];
+      const mode = item.rotation || "all";
+      const alongLength = [diameter, length, diameter];
+      const alongWidth = [length, diameter, diameter];
+      const standing = [diameter, diameter, length];
+      const axis =
+        item.cylinderAxis === "height"
+          ? "height"
+          : item.cylinderAxis === "width"
+            ? "width"
+            : "length";
+      let candidates;
+      if (axis === "height") {
+        candidates = mode === "all" ? [standing, alongLength, alongWidth] : [standing];
+      } else if (axis === "width") {
+        candidates =
+          mode === "fixed"
+            ? [alongWidth]
+            : mode === "upright"
+              ? [alongWidth, alongLength]
+              : [alongWidth, alongLength, standing];
       } else {
-        dimensions = [diameter, length, diameter];
+        candidates =
+          mode === "fixed"
+            ? [alongLength]
+            : mode === "upright"
+              ? [alongLength, alongWidth]
+              : [alongLength, alongWidth, standing];
       }
-    } else {
-      const baseExtraHeight =
-        item.dimensionsIncludeBase === false
-          ? Math.max(0, Number(item.baseHeight) || 0)
-          : 0;
-      dimensions = [
-        Math.max(1, Number(item.length) || 1) + clearance,
-        Math.max(1, Number(item.width) || 1) + clearance,
-        Math.max(1, Number(item.height) || 1) +
-          baseExtraHeight +
-          clearance,
-      ];
+      const seen = new Set();
+      return candidates.filter((orientation) => {
+        const key = orientation.join("x");
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
     }
+
+    let dimensions;
+    const baseExtraHeight =
+      item.dimensionsIncludeBase === false
+        ? Math.max(0, Number(item.baseHeight) || 0)
+        : 0;
+    dimensions = [
+      Math.max(1, Number(item.length) || 1) + clearance,
+      Math.max(1, Number(item.width) || 1) + clearance,
+      Math.max(1, Number(item.height) || 1) +
+        baseExtraHeight +
+        clearance,
+    ];
 
     const base = dimensions;
     const mode = item.rotation || "all";
@@ -471,7 +501,7 @@
             itemId: item.id,
             name: item.name,
             shape: item.shape,
-            cylinderAxis: item.cylinderAxis,
+            cylinderAxis: cylinderAxisFromOrientation(item, orientation),
             diameter: item.diameter,
             cylinderLength: item.cylinderLength,
             length: item.length,
@@ -915,13 +945,31 @@
     return valid.map((rect) => createSpace(rect.x, rect.y, 0, rect.dx, rect.dy, 1));
   }
 
+  function cylinderAxisFromOrientation(item, orientation) {
+    if (item.shape !== "cylinder") {
+      return item.cylinderAxis;
+    }
+    const rawLength = Math.max(
+      1,
+      Number(item.cylinderLength) || Number(item.length) || 1
+    );
+    const tolerance = Math.max(2, Number(item.clearance) || 0) + 2;
+    if (Math.abs(orientation[2] - rawLength) <= tolerance) {
+      return "height";
+    }
+    if (Math.abs(orientation[0] - rawLength) <= tolerance) {
+      return "width";
+    }
+    return "length";
+  }
+
   function placementFromItem(item, x, y, z, orientation) {
     return {
       placementId: `${item.id}-floor-${x}-${y}-${z}`,
       itemId: item.id,
       name: item.name,
       shape: item.shape,
-      cylinderAxis: item.cylinderAxis,
+      cylinderAxis: cylinderAxisFromOrientation(item, orientation),
       diameter: item.diameter,
       cylinderLength: item.cylinderLength,
       length: item.length,
@@ -1443,7 +1491,24 @@
           orientation[2] <= container.height
       );
       if (!fitsAnyOrientation) {
-        errors.push(`${label} 的尺寸可能无法放入当前柜型。`);
+        if (item.shape === "cylinder") {
+          const axisLabel =
+            item.cylinderAxis === "height"
+              ? "竖放"
+              : item.cylinderAxis === "width"
+                ? "沿柜宽"
+                : "沿柜长";
+          errors.push(
+            `${label}：直径 ${round(item.diameter, 0)} mm、长度 ${round(
+              item.cylinderLength,
+              0
+            )} mm 的圆柱（${axisLabel}）放不进柜内空间（柜内宽 ${container.width} / 长 ${
+              container.length
+            } / 高 ${container.height} mm），请核对直径、长度和轴向。`
+          );
+        } else {
+          errors.push(`${label} 的尺寸可能无法放入当前柜型。`);
+        }
       }
     });
 
