@@ -970,6 +970,31 @@ svg {
   background: #edf1f5;
 }
 
+.view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 27px;
+  margin-left: 3px;
+  padding: 0 7px 0 6px;
+  border-left: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.view-toggle input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.view-toggle:has(input:checked) {
+  color: var(--ink);
+}
+
 .icon-button.active {
   color: #ffffff;
   border-color: var(--accent);
