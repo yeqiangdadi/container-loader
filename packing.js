@@ -77,6 +77,13 @@
     { id: "volume-first", volumeWeight: 0.7, efficiencyWeight: 0.3 },
     { id: "efficiency-first", volumeWeight: 0.05, efficiencyWeight: 0.95 },
     { id: "height-first", volumeWeight: 0.45, efficiencyWeight: 0.55 },
+    {
+      id: "stack-first",
+      volumeWeight: 0.45,
+      efficiencyWeight: 0.55,
+      stackBias: 0.06,
+      columnFirst: true,
+    },
   ];
 
   function clamp(value, min, max) {
@@ -464,7 +471,20 @@
     return longCargoDimension(item) >= threshold;
   }
 
-  function calculateUsedExtent(capacity, count) {
+  function calculateUsedExtent(capacity, count, columnFirst) {
+    if (columnFirst) {
+      const perColumn = capacity.z;
+      const fullColumns = Math.floor(count / perColumn);
+      const remainder = count % perColumn;
+      const lastColumn = Math.max(0, fullColumns + (remainder > 0 ? 1 : 0) - 1);
+      const lastY = Math.floor(lastColumn / capacity.x);
+      const lastX = lastColumn % capacity.x;
+      return {
+        x: lastY > 0 ? capacity.x : lastX + 1,
+        y: lastY + 1,
+        z: remainder > 0 ? remainder : perColumn,
+      };
+    }
     const perLayer = capacity.x * capacity.y;
     const fullLayers = Math.floor(count / perLayer);
     const remainder = count % perLayer;
@@ -483,7 +503,7 @@
     };
   }
 
-  function createGridPlacements(item, space, orientation, capacity, limit) {
+  function createGridPlacements(item, space, orientation, capacity, limit, columnFirst) {
     const capacityCount = capacity.x * capacity.y * capacity.z;
     const count = Math.min(capacityCount, Math.max(0, Number(limit) || 0));
     const [unitX, unitY, unitZ] = orientation;
@@ -493,44 +513,59 @@
     let usedZ = 0;
     let remaining = count;
 
-    for (let z = 0; z < capacity.z && remaining > 0; z += 1) {
+    const push = (x, y, z) => {
+      placements.push({
+        placementId: `${item.id}-${space.x}-${space.y}-${space.z}-${placements.length}`,
+        itemId: item.id,
+        name: item.name,
+        shape: item.shape,
+        cylinderAxis: cylinderAxisFromOrientation(item, orientation),
+        diameter: item.diameter,
+        cylinderLength: item.cylinderLength,
+        length: item.length,
+        width: item.width,
+        height: item.height,
+        baseHeight:
+          item.dimensionsIncludeBase === false
+            ? Math.max(0, Number(item.baseHeight) || 0)
+            : Math.max(
+                0,
+                Math.min(
+                  Number(item.baseHeight) || 0,
+                  Number(item.height) || 0
+                )
+              ),
+        baseIncluded: item.dimensionsIncludeBase !== false,
+        x: space.x + x * unitX,
+        y: space.y + y * unitY,
+        z: space.z + z * unitZ,
+        dx: unitX,
+        dy: unitY,
+        dz: unitZ,
+        weight: Number(item.weight) || 0,
+        colorIndex: Number(item.colorIndex) || 0,
+      });
+      usedX = Math.max(usedX, (x + 1) * unitX);
+      usedY = Math.max(usedY, (y + 1) * unitY);
+      usedZ = Math.max(usedZ, (z + 1) * unitZ);
+      remaining -= 1;
+    };
+
+    if (columnFirst) {
+      // 先沿高度叠满一列再占下一块地面，尽量少占柜长。
       for (let y = 0; y < capacity.y && remaining > 0; y += 1) {
         for (let x = 0; x < capacity.x && remaining > 0; x += 1) {
-          placements.push({
-            placementId: `${item.id}-${space.x}-${space.y}-${space.z}-${placements.length}`,
-            itemId: item.id,
-            name: item.name,
-            shape: item.shape,
-            cylinderAxis: cylinderAxisFromOrientation(item, orientation),
-            diameter: item.diameter,
-            cylinderLength: item.cylinderLength,
-            length: item.length,
-            width: item.width,
-            height: item.height,
-            baseHeight:
-              item.dimensionsIncludeBase === false
-                ? Math.max(0, Number(item.baseHeight) || 0)
-                : Math.max(
-                    0,
-                    Math.min(
-                      Number(item.baseHeight) || 0,
-                      Number(item.height) || 0
-                    )
-                  ),
-            baseIncluded: item.dimensionsIncludeBase !== false,
-            x: space.x + x * unitX,
-            y: space.y + y * unitY,
-            z: space.z + z * unitZ,
-            dx: unitX,
-            dy: unitY,
-            dz: unitZ,
-            weight: Number(item.weight) || 0,
-            colorIndex: Number(item.colorIndex) || 0,
-          });
-          usedX = Math.max(usedX, (x + 1) * unitX);
-          usedY = Math.max(usedY, (y + 1) * unitY);
-          usedZ = Math.max(usedZ, (z + 1) * unitZ);
-          remaining -= 1;
+          for (let z = 0; z < capacity.z && remaining > 0; z += 1) {
+            push(x, y, z);
+          }
+        }
+      }
+    } else {
+      for (let z = 0; z < capacity.z && remaining > 0; z += 1) {
+        for (let y = 0; y < capacity.y && remaining > 0; y += 1) {
+          for (let x = 0; x < capacity.x && remaining > 0; x += 1) {
+            push(x, y, z);
+          }
         }
       }
     }
@@ -547,7 +582,8 @@
     space,
     placedWeight,
     container,
-    acceptCandidate = (candidate) => candidate
+    acceptCandidate = (candidate) => candidate,
+    strategy = null
   ) {
     if (
       (item.onlyTop && space.z <= 0.01) ||
@@ -633,7 +669,7 @@
         continue;
       }
 
-      const used = calculateUsedExtent(capacity, count);
+      const used = calculateUsedExtent(capacity, count, Boolean(strategy && strategy.columnFirst));
       const occupied = createSpace(
         space.x,
         space.y,
@@ -652,9 +688,19 @@
       const itemEfficiency =
         boundingVolume > 0 ? occupiedActualVolume / boundingVolume : 0;
       const volumeScore = occupiedActualVolume / 1000000000;
-      const efficiencyScore =
-        gridEfficiency * 0.55 + itemEfficiency * 0.45;
+      const stacked = space.z > 0.01;
+      // 叠放时不奖励“贴合单个支撑面”的紧凑空间，否则每个上层都会贴着自己
+      // 下方的货物左对齐，平台剩余长度被切碎，导致后面的箱子掉到地面。
+      const efficiencyScore = stacked
+        ? itemEfficiency
+        : gridEfficiency * 0.55 + itemEfficiency * 0.45;
 
+      const stackBias =
+        strategy && strategy.stackBias && stacked
+          ? strategy.stackBias
+          : 0;
+      // 平台空间越大越优先，让同一层箱子沿平台连续排满。
+      const platformBias = stacked ? space.dy * 0.0000005 : 0;
       const candidate = {
         item,
         space,
@@ -669,7 +715,9 @@
         efficiencyScore,
         score:
           volumeScore * 0.7 +
-          efficiencyScore * 0.3 -
+          efficiencyScore * 0.3 +
+          stackBias +
+          platformBias -
           space.z / 1000000 -
           space.y / 100000000,
       };
@@ -783,6 +831,17 @@
           reason: `${placement.name || "货物"} 的底部支撑不足`,
         };
       }
+      // 默认“完全支撑”时，上层沿柜长方向不能比下方任一货物更长（哪怕长一点也不行）
+      if (
+        !onFloor &&
+        supportRequired >= 0.999 &&
+        supports.some((entry) => placement.dy > entry.placement.dy + 0.01)
+      ) {
+        return {
+          ok: false,
+          reason: `${placement.name || "货物"} 比下方货物长，不能叠放`,
+        };
+      }
       for (const support of supports) {
         if (capacityFor(support.placement) <= 0) {
           return {
@@ -859,23 +918,13 @@
     return { ok: true, loadById };
   }
 
-  function chooseCandidate(candidates, strategy) {
+  function chooseCandidate(candidates) {
     if (!candidates.length) {
       return null;
     }
-    return candidates.reduce((best, candidate) => {
-      const candidateScore =
-        candidate.volumeScore * strategy.volumeWeight +
-        candidate.efficiencyScore * strategy.efficiencyWeight -
-        candidate.occupied.z / 1000000 -
-        candidate.occupied.y / 100000000;
-      const bestScore =
-        best.volumeScore * strategy.volumeWeight +
-        best.efficiencyScore * strategy.efficiencyWeight -
-        best.occupied.z / 1000000 -
-        best.occupied.y / 100000000;
-      return candidateScore > bestScore ? candidate : best;
-    });
+    return candidates.reduce((best, candidate) =>
+      candidate.score > best.score ? candidate : best
+    );
   }
 
   function splitFreeRectangle(rect, placed, epsilon) {
@@ -1203,7 +1252,8 @@
           candidate.space,
           candidate.orientation,
           candidate.capacity,
-          candidate.count
+          candidate.count,
+          Boolean(strategy.columnFirst)
         );
         const supportCheck = validateAndAssignSupports(
           generated.placements,
@@ -1231,7 +1281,8 @@
               space,
               placedWeight,
               container,
-              acceptCandidate
+              acceptCandidate,
+              strategy
             );
             if (candidate) {
               candidates.push(candidate);
@@ -1243,7 +1294,7 @@
         }
       }
 
-      const selected = chooseCandidate(candidates, strategy);
+      const selected = chooseCandidate(candidates);
       if (!selected) {
         break;
       }
@@ -1300,7 +1351,6 @@
   }
 
   function packOneContainer(remainingById, itemsById, container) {
-    let best = null;
     const attempts = [];
 
     for (const strategy of STRATEGIES) {
@@ -1329,29 +1379,67 @@
       });
     }
 
-    for (const entry of attempts) {
-      const { attempt, remainingById: attemptRemaining } = entry;
-      if (!attempt.placements.length) {
+    const viable = attempts.filter((entry) => entry.attempt.placements.length);
+    if (!viable.length) {
+      return null;
+    }
+    const bestVolume = Math.max(
+      ...viable.map((entry) => entry.attempt.volume)
+    );
+    const stackedCount = (attempt) =>
+      attempt.placements.reduce(
+        (sum, placement) => (placement.z > 0.01 ? sum + 1 : sum),
+        0
+      );
+    const floorAreaOf = (attempt) =>
+      attempt.placements.reduce(
+        (sum, placement) =>
+          placement.z <= 0.01 ? sum + placement.dx * placement.dy : sum,
+        0
+      );
+
+    // 装得同样多时，优先选择叠放更多、占地更小的方案（不超重、不违反承重）。
+    let bestEntry = null;
+    for (const entry of viable) {
+      const { attempt } = entry;
+      if (attempt.volume < bestVolume * 0.995) {
         continue;
       }
-      const attemptScore =
+      if (!bestEntry) {
+        bestEntry = entry;
+        continue;
+      }
+      const stackedNew = stackedCount(attempt);
+      const stackedBest = stackedCount(bestEntry.attempt);
+      if (stackedNew !== stackedBest) {
+        if (stackedNew > stackedBest) {
+          bestEntry = entry;
+        }
+        continue;
+      }
+      const floorNew = floorAreaOf(attempt);
+      const floorBest = floorAreaOf(bestEntry.attempt);
+      if (
+        floorNew < floorBest - 1 ||
+        (Math.abs(floorNew - floorBest) <= 1 &&
+          attempt.volume > bestEntry.attempt.volume)
+      ) {
+        bestEntry = entry;
+      }
+    }
+
+    const attempt = bestEntry.attempt;
+    return {
+      ...attempt,
+      score:
         attempt.volume * 0.8 +
         attempt.volumeUtilization *
           container.width *
           container.length *
           container.height *
-          0.2;
-
-      if (!best || attemptScore > best.score) {
-        best = {
-          ...attempt,
-          score: attemptScore,
-          remainingById: compactRemaining(attemptRemaining),
-        };
-      }
-    }
-
-    return best;
+          0.2,
+      remainingById: compactRemaining(bestEntry.remainingById),
+    };
   }
 
   function summarizePlacements(placements, itemsById) {
