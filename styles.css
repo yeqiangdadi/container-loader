@@ -1033,6 +1033,48 @@ svg {
   white-space: nowrap;
 }
 
+.manual-collapse {
+  margin-left: auto;
+  padding: 0 4px;
+  color: var(--accent-dark);
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.manual-collapse:hover {
+  text-decoration: underline;
+}
+
+.manual-head .manual-compact {
+  flex-basis: auto;
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.manual-panel.collapsed {
+  width: auto;
+  max-width: calc(100% - 20px);
+  padding: 7px 9px;
+}
+
+.manual-panel.collapsed .manual-head {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.manual-panel.collapsed #manualStatus,
+.manual-panel.collapsed .manual-form,
+.manual-panel.collapsed .manual-actions,
+.manual-panel.collapsed .manual-hint {
+  display: none;
+}
+
 .manual-head span {
   flex-basis: 100%;
   min-width: 0;
