@@ -250,12 +250,89 @@
       return {
         rows: parsed.rows,
         container: parsed.container,
-        activeTab: 0,
+        activeTab: Math.max(0, Number(parsed.activeTab) || 0),
         viewMode: "iso",
+        showLabels: parsed.showLabels === true,
+        manualByTab:
+          parsed.manualVersion === MANUAL_COPY_VERSION &&
+          parsed.manualByTab &&
+          typeof parsed.manualByTab === "object"
+            ? parsed.manualFormat === 2
+              ? Object.fromEntries(
+                  Object.entries(parsed.manualByTab)
+                    .filter(([, list]) => Array.isArray(list) && list.length)
+                    .map(([key, list]) => [key, unpackManualList(list)])
+                )
+              : parsed.manualByTab
+            : {},
       };
     } catch {
       return null;
     }
+  }
+
+  function packManualList(list) {
+    return list.map((item, index) => [
+      String(item.name || ""),
+      item.boxNo ? String(item.boxNo) : "",
+      item.shape === "cylinder" ? 1 : 0,
+      item.cylinderAxis === "width" ? 1 : item.cylinderAxis === "height" ? 2 : 0,
+      numberValue(item.diameter, 0),
+      numberValue(item.cylinderLength, 0),
+      numberValue(item.length, 0),
+      numberValue(item.width, 0),
+      numberValue(item.height, 0),
+      numberValue(item.baseHeight, 0),
+      numberValue(item.x, 0),
+      numberValue(item.y, 0),
+      numberValue(item.z, 0),
+      numberValue(item.dx, 0),
+      numberValue(item.dy, 0),
+      numberValue(item.dz, 0),
+      numberValue(item.weight, 0),
+      Math.round(numberValue(item.colorIndex, index)),
+      item.source === "plan" ? 1 : 0,
+    ]);
+  }
+
+  function unpackManualList(packed) {
+    if (!Array.isArray(packed)) {
+      return [];
+    }
+    return packed
+      .filter((row) => Array.isArray(row) && row.length >= 19)
+      .map((row, index) => {
+        const item = {
+          id: `plan-shared-${index}`,
+          itemId: `shared-${index}`,
+          name: String(row[0] || ""),
+          shape: row[2] === 1 ? "cylinder" : "box",
+          cylinderAxis: row[3] === 1 ? "width" : row[3] === 2 ? "height" : "length",
+          diameter: numberValue(row[4], 0),
+          cylinderLength: numberValue(row[5], 0),
+          length: numberValue(row[6], 0),
+          width: numberValue(row[7], 0),
+          height: numberValue(row[8], 0),
+          baseHeight: numberValue(row[9], 0),
+          baseIncluded: true,
+          x: numberValue(row[10], 0),
+          y: numberValue(row[11], 0),
+          z: numberValue(row[12], 0),
+          dx: numberValue(row[13], 0),
+          dy: numberValue(row[14], 0),
+          dz: numberValue(row[15], 0),
+          weight: numberValue(row[16], 0),
+          colorIndex: Math.round(numberValue(row[17], index)),
+          manual: true,
+        };
+        if (row[1]) {
+          item.boxNo = String(row[1]);
+        }
+        if (row[18] === 1) {
+          item.source = "plan";
+        }
+        return item;
+      });
   }
 
   function loadState() {
@@ -459,7 +536,7 @@
             <div class="cargo-row-head">
               <div class="cargo-index">
                 <i class="color-dot" style="background:${color}"></i>
-                <strong>${escapeHtml(row.name || `货物 ${index + 1}`)}</strong>
+                <strong>${escapeHtml(rowBoxLabel(row) || row.name || `货物 ${index + 1}`)}</strong>
               </div>
               <button class="remove-row" type="button" data-action="remove" title="删除该项" aria-label="删除第 ${index + 1} 项货物">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -1000,6 +1077,30 @@
       : `${labels[0]} ~ ${labels[labels.length - 1]}`;
   }
 
+  function rowBoxLabel(row) {
+    if (!row) {
+      return "";
+    }
+    if (Array.isArray(row.boxNos) && row.boxNos.length) {
+      return row.boxNos.length === 1
+        ? row.boxNos[0]
+        : `${row.boxNos[0]} ~ ${row.boxNos[row.boxNos.length - 1]}`;
+    }
+    if (row.boxNoStart !== undefined && row.boxNoStart !== null) {
+      const parts = {
+        prefix: row.boxNoPrefix || "",
+        start: row.boxNoStart,
+        suffix: row.boxNoSuffix || "",
+        width: Number(row.boxNoWidth) || 0,
+      };
+      const count = Math.max(1, Math.round(numberValue(row.quantity, 1)));
+      const first = formatBoxNo(parts, 0);
+      const last = count > 1 ? formatBoxNo(parts, count - 1) : first;
+      return first === last ? first : `${first} ~ ${last}`;
+    }
+    return "";
+  }
+
   function renderActiveContainer() {
     const result = state.result;
     if (!result || !result.ok || !result.containers.length) {
@@ -1040,7 +1141,7 @@
           <div class="load-list-item">
             <i class="color-dot" style="background:${color}"></i>
             <div class="load-list-copy">
-              <strong>${escapeHtml(entry.name)}</strong>
+              <strong>${escapeHtml(boxRangeFor(container, entry.itemId) || entry.name)}</strong>
               <span>${escapeHtml(entry.orientation)} · ${escapeHtml(entry.supportDescription)}</span>
             </div>
             <div class="load-list-count">
@@ -1799,17 +1900,33 @@
   }
 
   async function sharePlan() {
+    const manualByTab = {};
+    Object.entries(state.manualByTab || {}).forEach(([key, list]) => {
+      if (Array.isArray(list) && list.length) {
+        manualByTab[key] = packManualList(list);
+      }
+    });
+    const hasManual = Object.keys(manualByTab).length > 0;
     const payload = {
       version: 1,
       container: state.container,
       rows: state.rows,
+      activeTab: state.activeTab,
+      showLabels: state.showLabels === true,
+      manualVersion: MANUAL_COPY_VERSION,
+      manualFormat: 2,
+      manualByTab,
     };
     const url = new URL(window.location.href);
     url.hash = `plan=${encodeBase64Url(JSON.stringify(payload))}`;
     try {
       const copied = await copyText(url.href);
       if (copied) {
-        showToast("分享链接已复制，打开后会恢复当前柜型和货物数据。");
+        showToast(
+          hasManual
+            ? "分享链接已复制，打开后会恢复柜型、货物和手动微调位置。"
+            : "分享链接已复制，打开后会恢复当前柜型和货物数据。"
+        );
       } else {
         window.prompt("请复制分享链接", url.href);
       }
@@ -4507,11 +4624,34 @@
         `${window.location.pathname}${window.location.search}`
       );
       saveState();
-      showToast("已打开分享方案，可继续修改或重新计算。");
+      const manualKeys = Object.keys(state.manualByTab || {}).filter(
+        (key) => Array.isArray(state.manualByTab[key]) && state.manualByTab[key].length
+      );
+      if (manualKeys.length) {
+        const sharedTab = Number(manualKeys[0]);
+        if (
+          Number.isFinite(sharedTab) &&
+          sharedTab >= 0 &&
+          sharedTab < state.result.containers.length &&
+          sharedTab !== state.activeTab
+        ) {
+          state.activeTab = sharedTab;
+          renderActiveContainer();
+        }
+        setManualMode(true);
+        const list = manualItems();
+        if (list.length && renderer) {
+          renderer.selectManual(list[0].id);
+        }
+        showToast("已打开分享方案（含手动微调位置），可继续拖动调整。");
+      } else {
+        showToast("已打开分享方案，可继续修改或重新计算。");
+      }
     }
     registerServiceWorker();
     window.setTimeout(() => renderer.resize(), 180);
   }
+
 
   init();
 })();
