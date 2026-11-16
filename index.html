@@ -16,7 +16,7 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon-192.png" type="image/png" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=18" />
+    <link rel="stylesheet" href="./styles.css?v=19" />
   </head>
   <body>
     <div class="app-shell">
@@ -343,10 +343,14 @@
                       <label>重 kg<input id="manualWeight" type="number" min="0" step="10" value="500" /></label>
                     </div>
                     <div class="manual-actions">
+                      <div class="manual-move">
+                        <select id="manualMoveTarget" aria-label="选择要移动到的柜"></select>
+                        <button class="manual-button" id="manualMoveButton" type="button">移动到该柜</button>
+                      </div>
                       <button class="manual-button primary wide" id="manualImportButton" type="button">⇩ 导入自动方案</button>
                       <button class="manual-button" id="manualAddButton" type="button">＋ 添加货物</button>
                       <button class="manual-button" id="manualRotateButton" type="button">旋转 90°</button>
-                      <button class="manual-button" id="manualRaiseButton" type="button" title="每按一次升高 200 mm，可抬到柜顶以上再平移对调">↑ 升高</button>
+                      <button class="manual-button" id="manualRaiseButton" type="button" title="每按一次升高 200 mm，高度不设上限，可抬出柜顶再平移对调">↑ 升高</button>
                       <button class="manual-button" id="manualLowerButton" type="button" title="每按一次降低 200 mm">↓ 降低</button>
                       <button class="manual-button" id="manualWidthMinus" type="button" title="沿柜宽向左平移 100 mm">宽 −</button>
                       <button class="manual-button" id="manualWidthPlus" type="button" title="沿柜宽向右平移 100 mm">宽 +</button>
@@ -356,7 +360,7 @@
                       <button class="manual-button" id="manualDeleteButton" type="button">删除</button>
                       <button class="manual-button quiet" id="manualClearButton" type="button">清空</button>
                     </div>
-                    <p class="manual-hint">点柜内货物即选中，按钮只作用于选中的这件 · 宽±/长± 每次 100 mm · 键盘：←→ 沿宽、↑↓ 沿长，Shift+↑↓ 升降 · 升高可超过柜顶再平移对调 · 「添加货物」先选类型再点柜内 · 拖到货物上自动叠放 · Shift+拖动微调 · Esc 退出</p>
+                    <p class="manual-hint">点柜内货物即选中，按钮只作用于选中的这件 · 宽±/长± 每次 100 mm · 键盘：←→ 沿宽、↑↓ 沿长，Shift+↑↓ 升降 · 高度不设上限，可抬出柜顶再平移对调 · 选中后可用「移动到该柜」把货物挪到另一柜 · 「添加货物」先选类型再点柜内 · 拖到货物上自动叠放 · Shift+拖动微调 · Esc 退出</p>
                   </div>
                 </div>
               </section>
@@ -418,7 +422,7 @@
               <p>
                 按纸箱外尺寸、柜内净空和最大载重计算；尺寸单位均为
                 mm，重量单位为 kg。结果已考虑旋转和叠放规则，未计入托盘、绑扎、柜门内凸、装卸间隙及货物受压限制。
-                叠放前会校验底部支撑比例和下方包装的顶部承重；未填写“顶部可承重”的包装按“默认顶部承重”计算。
+                叠放前会校验底部支撑比例和下方包装的顶部承重；二层及以上默认按 80% 支撑，单行最低可选 50%。未填写“顶部可承重”的包装按“默认顶部承重”计算。
                 木箱默认带 100 mm 底座；如录入总高不含底座，计算会自动补足。
               </p>
             </section>
@@ -557,6 +561,6 @@ A002	纸箱B	800	600	500	120	25"></textarea>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./xlsx.full.min.js"></script>
     <script src="./packing.js?v=26"></script>
-    <script src="./app.js?v=48"></script>
+    <script src="./app.js?v=50"></script>
   </body>
 </html>
