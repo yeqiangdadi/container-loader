@@ -161,6 +161,8 @@
     manualToggle: document.querySelector("#manualToggle"),
     manualPanel: document.querySelector("#manualPanel"),
     manualStatus: document.querySelector("#manualStatus"),
+    manualCompact: document.querySelector("#manualCompact"),
+    manualCollapseButton: document.querySelector("#manualCollapseButton"),
     manualLength: document.querySelector("#manualLength"),
     manualWidth: document.querySelector("#manualWidth"),
     manualHeight: document.querySelector("#manualHeight"),
@@ -1309,6 +1311,17 @@
   }
 
   let manualCargoPick = "";
+  let manualCollapsed = false;
+
+  function applyManualCollapsed() {
+    elements.manualPanel.classList.toggle("collapsed", manualCollapsed);
+    elements.manualCollapseButton.textContent = manualCollapsed ? "展开" : "收起";
+    elements.manualCollapseButton.setAttribute(
+      "aria-expanded",
+      String(!manualCollapsed)
+    );
+    elements.manualCompact.hidden = !manualCollapsed;
+  }
 
   function cargoPickRow() {
     if (manualCargoPick === "") {
@@ -1550,6 +1563,8 @@
       : 0;
     const selected = list.find((item) => item.id === renderer.selectedManualId);
     const imported = isManualImported(list);
+    applyManualCollapsed();
+    elements.manualCompact.textContent = list.length ? `${list.length} 件` : "0 件";
     elements.manualRotateButton.disabled = !selected;
     elements.manualRaiseButton.disabled = !selected;
     elements.manualLowerButton.disabled = !selected;
@@ -4662,6 +4677,11 @@
     elements.manualDropButton.addEventListener("click", dropSelectedManual);
     elements.manualDeleteButton.addEventListener("click", deleteSelectedManual);
     elements.manualMoveButton.addEventListener("click", moveSelectedManualToContainer);
+    elements.manualCollapseButton.addEventListener("click", () => {
+      manualCollapsed = !manualCollapsed;
+      applyManualCollapsed();
+      refreshManualPanel();
+    });
     elements.manualClearButton.addEventListener("click", clearManualItems);
     elements.manualImportButton.addEventListener("click", importPlanToManual);
     [
