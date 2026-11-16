@@ -181,6 +181,7 @@
   };
 
   let openedSharedPlan = false;
+  let sharedPlanActiveTab = 0;
   const state = loadState();
   let toastTimer = null;
   let renderer = null;
@@ -247,10 +248,11 @@
         return null;
       }
       openedSharedPlan = true;
+      sharedPlanActiveTab = Math.max(0, Number(parsed.activeTab) || 0);
       return {
         rows: parsed.rows,
         container: parsed.container,
-        activeTab: Math.max(0, Number(parsed.activeTab) || 0),
+        activeTab: sharedPlanActiveTab,
         viewMode: "iso",
         showLabels: parsed.showLabels === true,
         manualByTab:
@@ -4628,7 +4630,11 @@
         (key) => Array.isArray(state.manualByTab[key]) && state.manualByTab[key].length
       );
       if (manualKeys.length) {
-        const sharedTab = Number(manualKeys[0]);
+        // 多柜时优先回到分享时所在的柜，否则打开后停在别的柜，看起来像微调丢了
+        const preferredKey = manualKeys.find(
+          (key) => Number(key) === sharedPlanActiveTab
+        );
+        const sharedTab = Number(preferredKey ?? manualKeys[0]);
         if (
           Number.isFinite(sharedTab) &&
           sharedTab >= 0 &&
