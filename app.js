@@ -1376,9 +1376,9 @@
       return;
     }
     const list = manualItems();
-    const imported = state.manualMode && isManualImported(list);
+    const imported = list.length > 0 && isManualImported(list);
     renderer.setPlanHidden(imported);
-    renderer.setManualPlacements(state.manualMode ? list : []);
+    renderer.setManualPlacements(list);
   }
 
   function importPlanToManual() {
@@ -2715,7 +2715,7 @@
       const planPlacements = this.planHidden
         ? []
         : this.container.placements.slice(0, this.maxVisible);
-      const manualPlacements = this.manualMode ? this.manualPlacements : [];
+      const manualPlacements = this.manualPlacements;
       const visiblePlacements = manualPlacements.length
         ? planPlacements.concat(manualPlacements)
         : planPlacements;
@@ -2876,7 +2876,7 @@
       const hiddenCount =
         this.container.placements.length - planPlacements.length;
       if (this.planHidden) {
-        elements.viewAngle.textContent = `手动微调 ${manualPlacements.length} 件`;
+        elements.viewAngle.textContent = `${this.manualMode ? "手动微调" : "已微调"} ${manualPlacements.length} 件`;
       } else {
         elements.viewAngle.textContent =
           hiddenCount > 0
