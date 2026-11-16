@@ -182,6 +182,8 @@
 
   let openedSharedPlan = false;
   let sharedPlanActiveTab = 0;
+  let sharedPlanFailed = "";
+  let pendingCompressedShare = readCompressedShareFromHash();
   const state = loadState();
   let toastTimer = null;
   let renderer = null;
@@ -213,7 +215,10 @@
   }
 
   function encodeBase64Url(value) {
-    const bytes = new TextEncoder().encode(value);
+    return bytesToBase64Url(new TextEncoder().encode(value));
+  }
+
+  function bytesToBase64Url(bytes) {
     let binary = "";
     bytes.forEach((byte) => {
       binary += String.fromCharCode(byte);
@@ -224,17 +229,45 @@
       .replaceAll("=", "");
   }
 
-  function decodeBase64Url(value) {
+  function base64UrlToBytes(value) {
     const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
     const padded = normalized.padEnd(
       normalized.length + ((4 - (normalized.length % 4)) % 4),
       "="
     );
     const binary = atob(padded);
-    const bytes = Uint8Array.from(binary, (character) =>
-      character.charCodeAt(0)
-    );
-    return new TextDecoder().decode(bytes);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  }
+
+  function decodeBase64Url(value) {
+    return new TextDecoder().decode(base64UrlToBytes(value));
+  }
+
+  function normalizeSharedPayload(parsed) {
+    if (!parsed || !Array.isArray(parsed.rows) || !parsed.rows.length || !parsed.container) {
+      return null;
+    }
+    openedSharedPlan = true;
+    sharedPlanActiveTab = Math.max(0, Number(parsed.activeTab) || 0);
+    return {
+      rows: parsed.rows,
+      container: parsed.container,
+      activeTab: sharedPlanActiveTab,
+      viewMode: "iso",
+      showLabels: parsed.showLabels === true,
+      manualByTab:
+        parsed.manualVersion === MANUAL_COPY_VERSION &&
+        parsed.manualByTab &&
+        typeof parsed.manualByTab === "object"
+          ? parsed.manualFormat === 2
+            ? Object.fromEntries(
+                Object.entries(parsed.manualByTab)
+                  .filter(([, list]) => Array.isArray(list) && list.length)
+                  .map(([key, list]) => [key, unpackManualList(list)])
+              )
+            : parsed.manualByTab
+          : {},
+    };
   }
 
   function readSharedPlan() {
@@ -243,34 +276,51 @@
       return null;
     }
     try {
-      const parsed = JSON.parse(decodeBase64Url(match[1]));
-      if (!Array.isArray(parsed.rows) || !parsed.rows.length || !parsed.container) {
-        return null;
-      }
-      openedSharedPlan = true;
-      sharedPlanActiveTab = Math.max(0, Number(parsed.activeTab) || 0);
-      return {
-        rows: parsed.rows,
-        container: parsed.container,
-        activeTab: sharedPlanActiveTab,
-        viewMode: "iso",
-        showLabels: parsed.showLabels === true,
-        manualByTab:
-          parsed.manualVersion === MANUAL_COPY_VERSION &&
-          parsed.manualByTab &&
-          typeof parsed.manualByTab === "object"
-            ? parsed.manualFormat === 2
-              ? Object.fromEntries(
-                  Object.entries(parsed.manualByTab)
-                    .filter(([, list]) => Array.isArray(list) && list.length)
-                    .map(([key, list]) => [key, unpackManualList(list)])
-                )
-              : parsed.manualByTab
-            : {},
-      };
+      return normalizeSharedPayload(JSON.parse(decodeBase64Url(match[1])));
     } catch {
+      sharedPlanFailed =
+        "分享链接不完整（可能被聊天软件截断），请让发送方重新分享完整链接。";
       return null;
     }
+  }
+
+  function readCompressedShareFromHash() {
+    const match = window.location.hash.match(/(?:^#|&)zplan=([^&]+)/);
+    return match ? match[1] : "";
+  }
+
+  async function decodeCompressedShare(encoded) {
+    if (!("DecompressionStream" in window)) {
+      sharedPlanFailed =
+        "当前浏览器版本过旧，打不开压缩的分享链接，请升级浏览器后重试。";
+      return null;
+    }
+    try {
+      const stream = new Blob([base64UrlToBytes(encoded)])
+        .stream()
+        .pipeThrough(new DecompressionStream("gzip"));
+      const text = await new Response(stream).text();
+      const shared = normalizeSharedPayload(JSON.parse(text));
+      if (!shared) {
+        throw new Error("invalid shared payload");
+      }
+      return shared;
+    } catch {
+      sharedPlanFailed =
+        "分享链接不完整（可能被聊天软件截断），请让发送方重新分享完整链接。";
+      return null;
+    }
+  }
+
+  async function encodeSharedPayload(json) {
+    if ("CompressionStream" in window) {
+      const stream = new Blob([new TextEncoder().encode(json)])
+        .stream()
+        .pipeThrough(new CompressionStream("gzip"));
+      const buffer = await new Response(stream).arrayBuffer();
+      return `zplan=${bytesToBase64Url(new Uint8Array(buffer))}`;
+    }
+    return `plan=${encodeBase64Url(json)}`;
   }
 
   function packManualList(list) {
@@ -1920,7 +1970,7 @@
       manualByTab,
     };
     const url = new URL(window.location.href);
-    url.hash = `plan=${encodeBase64Url(JSON.stringify(payload))}`;
+    url.hash = await encodeSharedPayload(JSON.stringify(payload));
     try {
       const copied = await copyText(url.href);
       if (copied) {
@@ -4595,7 +4645,14 @@
     });
   }
 
-  function init() {
+  async function init() {
+    if (pendingCompressedShare) {
+      const shared = await decodeCompressedShare(pendingCompressedShare);
+      pendingCompressedShare = "";
+      if (shared) {
+        Object.assign(state, shared, { result: null, manualMode: false });
+      }
+    }
     setContainerInputs();
     renderCargoRows();
     bindEvents();
@@ -4625,34 +4682,35 @@
         "",
         `${window.location.pathname}${window.location.search}`
       );
+      // 分享时正在看的柜必须原样打开，不能因为别的柜有微调就跳到那一柜
+      const tabCount =
+        state.result && state.result.containers
+          ? state.result.containers.length
+          : 0;
+      const sharedTab = Number(sharedPlanActiveTab);
+      if (
+        Number.isFinite(sharedTab) &&
+        sharedTab >= 0 &&
+        sharedTab < tabCount &&
+        sharedTab !== state.activeTab
+      ) {
+        state.activeTab = sharedTab;
+        renderActiveContainer();
+      }
       saveState();
-      const manualKeys = Object.keys(state.manualByTab || {}).filter(
-        (key) => Array.isArray(state.manualByTab[key]) && state.manualByTab[key].length
-      );
-      if (manualKeys.length) {
-        // 多柜时优先回到分享时所在的柜，否则打开后停在别的柜，看起来像微调丢了
-        const preferredKey = manualKeys.find(
-          (key) => Number(key) === sharedPlanActiveTab
-        );
-        const sharedTab = Number(preferredKey ?? manualKeys[0]);
-        if (
-          Number.isFinite(sharedTab) &&
-          sharedTab >= 0 &&
-          sharedTab < state.result.containers.length &&
-          sharedTab !== state.activeTab
-        ) {
-          state.activeTab = sharedTab;
-          renderActiveContainer();
-        }
+      const list = manualItems();
+      if (list.length) {
         setManualMode(true);
-        const list = manualItems();
-        if (list.length && renderer) {
+        if (renderer) {
           renderer.selectManual(list[0].id);
         }
         showToast("已打开分享方案（含手动微调位置），可继续拖动调整。");
       } else {
         showToast("已打开分享方案，可继续修改或重新计算。");
       }
+    }
+    if (sharedPlanFailed) {
+      showToast(sharedPlanFailed);
     }
     registerServiceWorker();
     window.setTimeout(() => renderer.resize(), 180);
