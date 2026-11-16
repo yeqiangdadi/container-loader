@@ -1082,7 +1082,8 @@ svg {
   grid-column: 1 / -1;
 }
 
-.manual-form select {
+.manual-form select,
+.manual-move select {
   width: 100%;
   min-width: 0;
   height: 27px;
@@ -1095,7 +1096,8 @@ svg {
   font-size: 11px;
 }
 
-.manual-form select:focus {
+.manual-form select:focus,
+.manual-move select:focus {
   outline: 2px solid rgba(11, 111, 103, 0.18);
   border-color: var(--accent);
 }
@@ -1105,6 +1107,18 @@ svg {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   margin-top: 8px;
+}
+
+.manual-move {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.manual-move select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .manual-button {
