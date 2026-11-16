@@ -16,7 +16,7 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon-192.png" type="image/png" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=19" />
+    <link rel="stylesheet" href="./styles.css?v=20" />
   </head>
   <body>
     <div class="app-shell">
@@ -333,6 +333,8 @@
                   <div class="manual-panel" id="manualPanel" hidden>
                     <div class="manual-head">
                       <strong>手动微调</strong>
+                      <span class="manual-compact" id="manualCompact" hidden></span>
+                      <button class="manual-collapse" id="manualCollapseButton" type="button" aria-expanded="true" title="收起微调面板，避免挡住柜内视图">收起</button>
                       <span id="manualStatus">导入自动方案后拖动货物，或手动添加箱子</span>
                     </div>
                     <div class="manual-form">
@@ -561,6 +563,6 @@ A002	纸箱B	800	600	500	120	25"></textarea>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./xlsx.full.min.js"></script>
     <script src="./packing.js?v=26"></script>
-    <script src="./app.js?v=50"></script>
+    <script src="./app.js?v=51"></script>
   </body>
 </html>
