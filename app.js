@@ -16,6 +16,8 @@
   ];
   const MANUAL_COLOR = "#c9762d";
   const MANUAL_SNAP_MM = 10;
+  // 手动微调不限制高度，只挡掉异常大的坐标
+  const MANUAL_MAX_Z = 100000;
 
   const DEFAULT_ROW = {
     sku: "SKU-001",
@@ -33,7 +35,7 @@
     weight: 12,
     topLoadKg: 0,
     stackable: true,
-    supportRequired: 1,
+    supportRequired: 0.8,
     onlyBottom: false,
     onlyTop: false,
     quantity: 1000,
@@ -177,6 +179,8 @@
     manualDropButton: document.querySelector("#manualDropButton"),
     manualDeleteButton: document.querySelector("#manualDeleteButton"),
     manualClearButton: document.querySelector("#manualClearButton"),
+    manualMoveTarget: document.querySelector("#manualMoveTarget"),
+    manualMoveButton: document.querySelector("#manualMoveButton"),
     toast: document.querySelector("#toast"),
   };
 
@@ -210,6 +214,7 @@
       viewMode: "iso",
       manualMode: false,
       manualByTab: {},
+      manualOverride: {},
       showLabels: false,
     };
   }
@@ -266,6 +271,10 @@
                   .map(([key, list]) => [key, unpackManualList(list)])
               )
             : parsed.manualByTab
+          : {},
+      manualOverride:
+        parsed.manualOverride && typeof parsed.manualOverride === "object"
+          ? parsed.manualOverride
           : {},
     };
   }
@@ -409,9 +418,19 @@
       if (CONTAINERS[savedContainer.id]) {
         Object.assign(savedContainer, CONTAINERS[savedContainer.id]);
       }
+      // 旧版默认 100% 支撑，新规则默认 80%，把没单独改过的行迁移过来
+      const savedRows =
+        saved.supportDefaultVersion === 2
+          ? saved.rows
+          : saved.rows.map((row) =>
+              numberValue(row && row.supportRequired, 1) === 1
+                ? { ...row, supportRequired: 0.8 }
+                : row
+            );
       return {
         ...fallback,
         ...saved,
+        rows: savedRows,
         container: savedContainer,
         smallContainer: {
           ...DEFAULT_SMALL_CONTAINER,
@@ -428,6 +447,10 @@
           saved.manualByTab &&
           typeof saved.manualByTab === "object"
             ? saved.manualByTab
+            : {},
+        manualOverride:
+          saved.manualOverride && typeof saved.manualOverride === "object"
+            ? saved.manualOverride
             : {},
       };
     } catch {
@@ -451,6 +474,8 @@
           showLabels: state.showLabels === true,
           manualVersion: MANUAL_COPY_VERSION,
           manualByTab: state.manualByTab,
+          manualOverride: state.manualOverride,
+          supportDefaultVersion: 2,
         })
       );
     } catch {
@@ -668,9 +693,11 @@
                 <label class="mini-field">
                   <span>底部支撑要求</span>
                   <select data-field="supportRequired" aria-label="底部支撑要求">
-                    <option value="1" ${numberValue(row.supportRequired, 1) === 1 ? "selected" : ""}>必须完全支撑</option>
-                    <option value="0.9" ${numberValue(row.supportRequired, 1) === 0.9 ? "selected" : ""}>至少 90%</option>
-                    <option value="0.8" ${numberValue(row.supportRequired, 1) === 0.8 ? "selected" : ""}>至少 80%</option>
+                    <option value="1" ${numberValue(row.supportRequired, 0.8) === 1 ? "selected" : ""}>必须完全支撑</option>
+                    <option value="0.9" ${numberValue(row.supportRequired, 0.8) === 0.9 ? "selected" : ""}>至少 90%</option>
+                    <option value="0.8" ${numberValue(row.supportRequired, 0.8) === 0.8 ? "selected" : ""}>至少 80%（默认）</option>
+                    <option value="0.7" ${numberValue(row.supportRequired, 0.8) === 0.7 ? "selected" : ""}>至少 70%</option>
+                    <option value="0.5" ${numberValue(row.supportRequired, 0.8) === 0.5 ? "selected" : ""}>至少 50%</option>
                   </select>
                 </label>
                 <label class="stack-toggle mini-field" style="grid-column:1 / -1">
@@ -975,7 +1002,7 @@
       weight: numberValue(row.weight, 0),
       topLoadKg: numberValue(row.topLoadKg, 0),
       stackable: row.stackable !== false,
-      supportRequired: numberValue(row.supportRequired, 1),
+      supportRequired: numberValue(row.supportRequired, 0.8),
       onlyBottom: Boolean(row.onlyBottom),
       onlyTop: Boolean(row.onlyTop),
       quantity: numberValue(row.quantity, 0),
@@ -1401,6 +1428,7 @@
       return;
     }
     state.manualByTab = {};
+    state.manualOverride = {};
     importReplaceAt = 0;
     if (renderer) {
       renderer.selectManual(null);
@@ -1411,6 +1439,9 @@
 
   function ensureManualPlanLoaded() {
     if (!state.manualMode || !renderer || manualItems().length) {
+      return false;
+    }
+    if (state.manualOverride[String(state.activeTab)] === true) {
       return false;
     }
     const container = activeContainer();
@@ -1426,8 +1457,8 @@
       return;
     }
     const list = manualItems();
-    const imported = list.length > 0 && isManualImported(list);
-    renderer.setPlanHidden(imported);
+    const overridden = state.manualOverride[String(state.activeTab)] === true;
+    renderer.setPlanHidden(overridden || (list.length > 0 && isManualImported(list)));
     renderer.setManualPlacements(list);
   }
 
@@ -1467,6 +1498,7 @@
       return;
     }
     state.manualByTab[String(state.activeTab)] = items;
+    delete state.manualOverride[String(state.activeTab)];
     syncManualScene();
     renderer.selectManual(items[0].id);
     refreshManualPanel();
@@ -1528,6 +1560,32 @@
     elements.manualDropButton.disabled = !selected;
     elements.manualDeleteButton.disabled = !selected;
     elements.manualClearButton.disabled = !list.length;
+    const containers =
+      state.result && Array.isArray(state.result.containers)
+        ? state.result.containers
+        : [];
+    const activeIndex = Number(state.activeTab) || 0;
+    const previousTarget = elements.manualMoveTarget.value;
+    elements.manualMoveTarget.textContent = "";
+    containers.forEach((entry, index) => {
+      if (index === activeIndex) {
+        return;
+      }
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = entry.label || `第 ${entry.index} 柜`;
+      elements.manualMoveTarget.appendChild(option);
+    });
+    if (
+      [...elements.manualMoveTarget.options].some(
+        (option) => option.value === previousTarget
+      )
+    ) {
+      elements.manualMoveTarget.value = previousTarget;
+    }
+    const canMove = Boolean(selected) && containers.length > 1;
+    elements.manualMoveTarget.disabled = !canMove;
+    elements.manualMoveButton.disabled = !canMove;
     elements.manualImportButton.disabled = planCount === 0;
     elements.manualImportButton.textContent = !list.length
       ? "⇩ 导入自动方案"
@@ -1543,6 +1601,12 @@
       return;
     }
     if (!list.length) {
+      if (state.manualOverride[String(state.activeTab)] === true) {
+        elements.manualStatus.textContent =
+          "本柜手动物品已全部移到其他柜 · 点「导入自动方案」可恢复本柜自动摆放";
+        elements.manualStatus.classList.remove("warn");
+        return;
+      }
       elements.manualStatus.textContent = planCount
         ? `还没有手动货物 · 点「导入自动方案」载入整柜 ${planCount} 件再拖动微调，或点「添加货物」在柜内连续点击放置`
         : "还没有手动货物 · 在「添加货物」里选类型后点柜内放置";
@@ -1661,7 +1725,7 @@
       shape: box.shape || "box",
       x: clampValue(position.x, 0, Math.max(0, template.width - box.dx)),
       y: clampValue(position.y, 0, Math.max(0, template.length - box.dy)),
-      z: clampValue(position.z, 0, Math.max(0, template.height - box.dz)),
+      z: clampValue(position.z, 0, MANUAL_MAX_Z),
       dx: box.dx,
       dy: box.dy,
       dz: box.dz,
@@ -1760,9 +1824,6 @@
       0,
       Math.max(0, template.length - item.dy)
     );
-    if (item.z + item.dz > template.height) {
-      item.z = Math.max(0, template.height - item.dz);
-    }
     if (renderer.blockedAt(item, item.x, item.y, item.z)) {
       Object.assign(item, prev);
       showToast("旋转后会与相邻货物重叠，先挪开一点再旋转。");
@@ -1803,8 +1864,7 @@
       return;
     }
     const step = 200;
-    const maxZ = Math.max(0, template.height);
-    let target = clampValue(snapMm(item.z + direction * step), 0, maxZ);
+    let target = clampValue(snapMm(item.z + direction * step), 0, MANUAL_MAX_Z);
     if (direction < 0) {
       const below = renderer
         .supportTops(item)
@@ -1865,12 +1925,71 @@
     saveState();
   }
 
+  function moveSelectedManualToContainer() {
+    const item = selectedManualItem();
+    if (!item || !renderer || !state.result) {
+      return;
+    }
+    const containers = state.result.containers || [];
+    const sourceIndex = Number(state.activeTab) || 0;
+    const targetIndex = Number(elements.manualMoveTarget.value);
+    if (
+      !Number.isInteger(targetIndex) ||
+      targetIndex < 0 ||
+      targetIndex >= containers.length ||
+      targetIndex === sourceIndex
+    ) {
+      showToast("请先选择要移动到的柜。");
+      return;
+    }
+    const source = manualItems();
+    const index = source.findIndex((entry) => entry.id === item.id);
+    if (index === -1) {
+      return;
+    }
+    const target = containers[targetIndex];
+    const dims = target.container || state.result.container;
+    const moved = {
+      ...item,
+      id: `manual-${createId()}`,
+      x: clampValue(Number(item.x) || 0, 0, Math.max(0, dims.width - item.dx)),
+      y: clampValue(Number(item.y) || 0, 0, Math.max(0, dims.length - item.dy)),
+      z: clampValue(Number(item.z) || 0, 0, MANUAL_MAX_Z),
+    };
+    source.splice(index, 1);
+    const targetKey = String(targetIndex);
+    let targetList = state.manualByTab[targetKey];
+    if (!Array.isArray(targetList) || !targetList.length) {
+      targetList =
+        state.manualOverride[targetKey] === true
+          ? []
+          : (target.placements || []).map((placement, placementIndex) => ({
+              ...placement,
+              id: `plan-${placementIndex}-${createId()}`,
+              manual: true,
+              source: "plan",
+            }));
+      state.manualByTab[targetKey] = targetList;
+    }
+    targetList.push(moved);
+    if (!source.length) {
+      state.manualOverride[String(sourceIndex)] = true;
+    }
+    renderer.selectManual(null);
+    syncManualScene();
+    refreshManualPanel();
+    saveState();
+    const label = target.label || `第 ${target.index} 柜`;
+    showToast(`已把「${moved.name}」移动到${label}，切换过去可继续微调。`);
+  }
+
   function clearManualItems() {
     const list = manualItems();
     if (!list.length) {
       return;
     }
     list.length = 0;
+    delete state.manualOverride[String(state.activeTab)];
     renderer.selectManual(null);
     syncManualScene();
     refreshManualPanel();
@@ -1958,7 +2077,11 @@
         manualByTab[key] = packManualList(list);
       }
     });
-    const hasManual = Object.keys(manualByTab).length > 0;
+    const manualOverride = Object.fromEntries(
+      Object.entries(state.manualOverride || {}).filter(([, value]) => value === true)
+    );
+    const hasManual =
+      Object.keys(manualByTab).length > 0 || Object.keys(manualOverride).length > 0;
     const payload = {
       version: 1,
       container: state.container,
@@ -1968,6 +2091,7 @@
       manualVersion: MANUAL_COPY_VERSION,
       manualFormat: 2,
       manualByTab,
+      manualOverride,
     };
     const url = new URL(window.location.href);
     url.hash = await encodeSharedPayload(JSON.stringify(payload));
@@ -2013,6 +2137,7 @@
     state.activeTab = 0;
     state.viewMode = "iso";
     state.manualByTab = {};
+    state.manualOverride = {};
     setContainerInputs();
     renderCargoRows();
     showEmpty();
@@ -2496,8 +2621,7 @@
       const item = drag.item;
       const maxX = Math.max(0, template.width - item.dx);
       const maxY = Math.max(0, template.length - item.dy);
-      // Bottom may be lifted to the ceiling so a box can clear a stack and be swapped.
-      const maxZ = Math.max(0, template.height);
+      const maxZ = MANUAL_MAX_Z;
       const applyMove = (nextX, nextY, nextZ) => {
         const candidates = [
           { x: nextX, y: nextY, z: nextZ },
@@ -2613,10 +2737,7 @@
       });
       return (
         tops
-          .filter(
-            (top) =>
-              top > item.z + 0.5 && top + item.dz <= template.height + 0.5
-          )
+          .filter((top) => top > item.z + 0.5)
           .sort((a, b) => a - b)
           .find((top) => !this.blockedAt(item, x, y, top)) ?? null
       );
@@ -2632,9 +2753,7 @@
       if (best === null || Math.abs(best - z) > 120) {
         return z;
       }
-      const template = this.template;
-      const maxZ = template ? Math.max(0, template.height - item.dz) : z;
-      return clampValue(snapMm(best), 0, maxZ);
+      return clampValue(snapMm(best), 0, MANUAL_MAX_Z);
     }
 
     settleManualHeight(item) {
@@ -2644,11 +2763,7 @@
       }
       const tops = this.supportTops(item);
       const below = Math.max(...tops.filter((top) => top <= item.z + 0.5));
-      const target = clampValue(
-        snapMm(below),
-        0,
-        Math.max(0, template.height - item.dz)
-      );
+      const target = clampValue(snapMm(below), 0, MANUAL_MAX_Z);
       const collides = this.placementsInColumn().some((other) => {
         if (other === item || !footprintsOverlap(other, item)) {
           return false;
@@ -2667,20 +2782,18 @@
       const template = this.template;
       const maxX = Math.max(0, template.width - draft.dx);
       const maxY = Math.max(0, template.length - draft.dy);
-      const maxZ = Math.max(0, template.height - draft.dz);
+      const maxZ = MANUAL_MAX_Z;
       let z = 0;
       let point = null;
       const hit = this.pickPlacement(local, true);
       const support = hit ? this.climbToStackTop(hit) : null;
       if (support) {
         const top = support.z + support.dz;
-        if (top + draft.dz <= template.height + 0.5) {
-          z = top;
-          point = {
-            x: support.x + support.dx / 2,
-            y: support.y + support.dy / 2,
-          };
-        }
+        z = top;
+        point = {
+          x: support.x + support.dx / 2,
+          y: support.y + support.dy / 2,
+        };
       }
       if (!point) {
         point = this.screenToWorldPlane(local.x, local.y, 0);
@@ -3562,7 +3675,7 @@
   function parseSupportRequired(value) {
     const raw = coerceNumber(value);
     if (!Number.isFinite(raw)) {
-      return 1;
+      return 0.8;
     }
     const ratio = raw > 1 ? raw / 100 : raw;
     return Math.min(1, Math.max(0, ratio));
@@ -4548,6 +4661,7 @@
     });
     elements.manualDropButton.addEventListener("click", dropSelectedManual);
     elements.manualDeleteButton.addEventListener("click", deleteSelectedManual);
+    elements.manualMoveButton.addEventListener("click", moveSelectedManualToContainer);
     elements.manualClearButton.addEventListener("click", clearManualItems);
     elements.manualImportButton.addEventListener("click", importPlanToManual);
     [
@@ -4699,9 +4813,11 @@
       }
       saveState();
       const list = manualItems();
-      if (list.length) {
+      const overridden =
+        state.manualOverride[String(state.activeTab)] === true;
+      if (list.length || overridden) {
         setManualMode(true);
-        if (renderer) {
+        if (renderer && list.length) {
           renderer.selectManual(list[0].id);
         }
         showToast("已打开分享方案（含手动微调位置），可继续拖动调整。");
