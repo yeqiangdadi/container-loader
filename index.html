@@ -16,7 +16,7 @@
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon-192.png" type="image/png" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=20" />
+    <link rel="stylesheet" href="./styles.css?v=21" />
   </head>
   <body>
     <div class="app-shell">
@@ -388,6 +388,8 @@
                     <strong id="containerWeightRate">0%</strong>
                   </div>
                 </div>
+                <div class="dim-usage" id="dimUsage" aria-label="尺寸利用率"></div>
+                <p class="load-advice" id="loadAdvice" hidden></p>
                 <div class="container-load-list" id="containerLoadList"></div>
               </aside>
             </div>
@@ -563,6 +565,6 @@ A002	纸箱B	800	600	500	120	25"></textarea>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="./xlsx.full.min.js"></script>
     <script src="./packing.js?v=26"></script>
-    <script src="./app.js?v=51"></script>
+    <script src="./app.js?v=52"></script>
   </body>
 </html>

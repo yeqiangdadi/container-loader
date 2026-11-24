@@ -149,6 +149,8 @@
     containerUnits: document.querySelector("#containerUnits"),
     containerVolumeRate: document.querySelector("#containerVolumeRate"),
     containerWeightRate: document.querySelector("#containerWeightRate"),
+    dimUsage: document.querySelector("#dimUsage"),
+    loadAdvice: document.querySelector("#loadAdvice"),
     containerLoadList: document.querySelector("#containerLoadList"),
     detailScope: document.querySelector("#detailScope"),
     loadTableBody: document.querySelector("#loadTableBody"),
@@ -1090,21 +1092,266 @@
     `;
   }
 
-  function renderResult(result) {
-    const totals = result.totals;
-    elements.emptyState.hidden = true;
-    elements.resultError.hidden = true;
-    elements.resultContent.hidden = false;
-    elements.resultTitle.textContent = result.sequence
-      ? `${result.totals.containers} 个柜混装结果`
-      : `${result.container.name} 装柜结果`;
-    elements.resultBadge.textContent = `平均容积率 ${percent(
-      totals.volumeUtilization
-    )}`;
+  function containerViews() {
+    if (!state.result || !state.result.ok) {
+      return [];
+    }
+    return state.result.containers.map((container, index) => {
+      const key = String(index);
+      const list = state.manualByTab[key];
+      const overridden = state.manualOverride[key] === true;
+      const manualActive =
+        Array.isArray(list) && (list.length > 0 || overridden);
+      const placements = manualActive ? list : container.placements || [];
+      const template = container.container || state.result.container;
+      const manual =
+        manualActive &&
+        (overridden ||
+          manualPlanDiffers(list, container.placements || []));
+      return {
+        index,
+        raw: container,
+        label: container.label || `第 ${container.index} 柜`,
+        template,
+        manual,
+        manualActive,
+        placements,
+        summary: manualActive
+          ? summarizeManualPlacements(placements)
+          : container.summary || [],
+        ...measurePlacements(placements, template),
+      };
+    });
+  }
+
+  function manualPlanDiffers(list, plan) {
+    if (list.length !== plan.length) {
+      return true;
+    }
+    return list.some((item, index) => {
+      const entry = plan[index];
+      if (!entry || item.itemId !== entry.itemId) {
+        return true;
+      }
+      return (
+        Math.abs((Number(item.x) || 0) - (Number(entry.x) || 0)) > 0.5 ||
+        Math.abs((Number(item.y) || 0) - (Number(entry.y) || 0)) > 0.5 ||
+        Math.abs((Number(item.z) || 0) - (Number(entry.z) || 0)) > 0.5 ||
+        Math.abs((Number(item.dx) || 0) - (Number(entry.dx) || 0)) > 0.5 ||
+        Math.abs((Number(item.dy) || 0) - (Number(entry.dy) || 0)) > 0.5 ||
+        Math.abs((Number(item.dz) || 0) - (Number(entry.dz) || 0)) > 0.5
+      );
+    });
+  }
+
+  function dimStat(used, capacity, tolerance) {
+    return {
+      used,
+      capacity,
+      rate: capacity ? used / capacity : 0,
+      over: capacity > 0 && used > capacity + (tolerance || 0.5),
+    };
+  }
+
+  function measurePlacements(placements, template) {
+    const length = Math.max(0, Number(template && template.length) || 0);
+    const width = Math.max(0, Number(template && template.width) || 0);
+    const height = Math.max(0, Number(template && template.height) || 0);
+    const payload = Math.max(0, Number(template && template.payload) || 0);
+    let volume = 0;
+    let weight = 0;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = 0;
+    let maxY = 0;
+    let maxTop = 0;
+    placements.forEach((entry) => {
+      const dx = Math.max(0, Number(entry.dx) || 0);
+      const dy = Math.max(0, Number(entry.dy) || 0);
+      const dz = Math.max(0, Number(entry.dz) || 0);
+      const x = Number(entry.x) || 0;
+      const y = Number(entry.y) || 0;
+      const z = Number(entry.z) || 0;
+      volume += dx * dy * dz;
+      weight += Number(entry.weight) || 0;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + dx);
+      maxY = Math.max(maxY, y + dy);
+      maxTop = Math.max(maxTop, z + dz);
+    });
+    const units = placements.length;
+    const usedLength = units ? Math.max(0, maxY - minY) : 0;
+    const usedWidth = units ? Math.max(0, maxX - minX) : 0;
+    const containerVolume = length * width * height;
+    return {
+      units,
+      volume,
+      cbm: volume / 1e9,
+      weight,
+      volumeUtilization: containerVolume ? volume / containerVolume : 0,
+      weightUtilization: payload ? weight / payload : 0,
+      dimensions: {
+        length: dimStat(usedLength, length, 0.5),
+        width: dimStat(usedWidth, width, 0.5),
+        height: dimStat(units ? maxTop : 0, height, 0.5),
+        footprint: dimStat(
+          (usedLength * usedWidth) / 1e6,
+          (length * width) / 1e6,
+          0.01
+        ),
+      },
+    };
+  }
+
+  function summarizeManualPlacements(placements) {
+    const byKey = new Map();
+    placements.forEach((placement) => {
+      const item = itemById(placement.itemId);
+      const name =
+        placement.name || (item && item.name) || "手动货物";
+      const key = `${placement.itemId || "manual"}|${name}`;
+      let entry = byKey.get(key);
+      if (!entry) {
+        entry = {
+          itemId: placement.itemId || key,
+          name,
+          sku: placement.sku || (item && item.sku) || "",
+          colorIndex:
+            placement.colorIndex !== undefined
+              ? Number(placement.colorIndex)
+              : item
+              ? item.colorIndex
+              : 0,
+          count: 0,
+          volume: 0,
+          weight: 0,
+          dims: new Set(),
+          floorCount: 0,
+          supports: new Set(),
+          boxNos: [],
+        };
+        byKey.set(key, entry);
+      }
+      const dx = Math.max(0, Number(placement.dx) || 0);
+      const dy = Math.max(0, Number(placement.dy) || 0);
+      const dz = Math.max(0, Number(placement.dz) || 0);
+      entry.count += 1;
+      entry.volume += dx * dy * dz;
+      entry.weight += Number(placement.weight) || 0;
+      entry.dims.add(`${dx} × ${dy} × ${dz} mm`);
+      if ((Number(placement.z) || 0) <= 0.01) {
+        entry.floorCount += 1;
+      } else {
+        entry.supports.add(placement.supportDescription || "手动叠放");
+      }
+      if (placement.boxNo) {
+        entry.boxNos.push(String(placement.boxNo));
+      }
+    });
+    return Array.from(byKey.values()).map((entry) => {
+      const supports = Array.from(entry.supports);
+      let supportDescription = "柜底";
+      if (entry.floorCount === 0) {
+        supportDescription = supports[0] || "手动叠放";
+      } else if (entry.floorCount < entry.count) {
+        supportDescription = `柜底 ${entry.floorCount} 件 / 其余叠放`;
+      }
+      return {
+        itemId: entry.itemId,
+        name: entry.name,
+        sku: entry.sku,
+        colorIndex: entry.colorIndex,
+        count: entry.count,
+        cbm: entry.volume / 1e9,
+        weight: entry.weight,
+        orientation:
+          entry.dims.size === 1
+            ? Array.from(entry.dims)[0]
+            : `${entry.dims.size} 种摆法`,
+        supportDescription,
+        boxNos: entry.boxNos,
+      };
+    });
+  }
+
+  function displayTotals(views) {
+    const occupied = views.filter((view) => view.units > 0);
+    const volume = occupied.reduce((sum, view) => sum + view.volume, 0);
+    const weight = occupied.reduce((sum, view) => sum + view.weight, 0);
+    const units = occupied.reduce((sum, view) => sum + view.units, 0);
+    const containerVolume = occupied.reduce(
+      (sum, view) =>
+        sum +
+        (Number(view.template.width) || 0) *
+          (Number(view.template.length) || 0) *
+          (Number(view.template.height) || 0),
+      0
+    );
+    const payload = occupied.reduce(
+      (sum, view) => sum + (Number(view.template.payload) || 0),
+      0
+    );
+    return {
+      containers: occupied.length,
+      emptyContainers: views.length - occupied.length,
+      units,
+      volume,
+      cbm: volume / 1e9,
+      weight,
+      volumeUtilization: containerVolume ? volume / containerVolume : 0,
+      weightUtilization: payload ? weight / payload : 0,
+      manual: views.some((view) => view.manual),
+      itemCount: new Set(
+        occupied.flatMap((view) =>
+          view.placements.map(
+            (entry) => `${entry.itemId || "manual"}|${entry.name || ""}`
+          )
+        )
+      ).size,
+    };
+  }
+
+  function isLowLoad(view) {
+    if (!view.units) {
+      return false;
+    }
+    const rates = [
+      view.volumeUtilization,
+      view.weightUtilization,
+      view.dimensions.length.rate,
+      view.dimensions.width.rate,
+      view.dimensions.height.rate,
+    ];
+    return Math.max(...rates) < 0.3;
+  }
+
+  function updateResultHeader(views) {
+    const totals = displayTotals(views);
+    if (!totals.units) {
+      elements.resultTitle.textContent = "当前方案没有已装货物";
+    } else if (state.result.sequence) {
+      elements.resultTitle.textContent = `${totals.containers} 个柜混装结果${
+        totals.manual ? " · 手动" : ""
+      }`;
+    } else {
+      elements.resultTitle.textContent = `${
+        state.result.container.name
+      } 装柜结果${totals.manual ? " · 手动" : ""}`;
+    }
+    elements.resultBadge.textContent = `${
+      totals.manual ? "手动 · " : ""
+    }平均容积率 ${percent(totals.volumeUtilization)}`;
     elements.metricContainers.textContent = formatInteger(totals.containers);
-    elements.metricContainersHint.textContent = "全部货物已分配";
+    elements.metricContainersHint.textContent = totals.emptyContainers
+      ? `另 ${totals.emptyContainers} 个空柜未计入`
+      : totals.manual
+      ? "已按手动摆放统计"
+      : "全部货物已分配";
     elements.metricUnits.textContent = formatInteger(totals.units);
-    elements.metricUnitsHint.textContent = `${result.items.length} 项货物`;
+    elements.metricUnitsHint.textContent = `${totals.itemCount} 项货物${
+      totals.manual ? " · 手动方案" : ""
+    }`;
     elements.metricVolume.innerHTML = `${formatNumber(
       totals.cbm,
       3
@@ -1126,36 +1373,240 @@
       100,
       totals.weightUtilization * 100
     )}%`;
+  }
 
-    elements.containerTabs.innerHTML = result.containers
-      .map(
-        (container, index) => `
-          <button class="result-tab ${
-            index === state.activeTab ? "active" : ""
-          }" type="button" data-tab="${index}" role="tab" aria-selected="${
-            index === state.activeTab
-          }">${escapeHtml(container.label || `第 ${container.index} 柜`)}</button>
-        `
-      )
+  function updateContainerTabs(views) {
+    elements.containerTabs.innerHTML = views
+      .map((view, index) => {
+        const active = index === state.activeTab;
+        const meta = view.units
+          ? `${view.units} 件 · ${percent(view.volumeUtilization)}`
+          : "空柜";
+        const low = view.units > 0 && isLowLoad(view) ? " is-low" : "";
+        const empty = view.units ? "" : " is-empty";
+        return `
+          <button class="result-tab${
+            active ? " active" : ""
+          }${low}${empty}" type="button" data-tab="${index}" role="tab" aria-selected="${active}">
+            <span class="result-tab-label">${escapeHtml(view.label)}</span>
+            <span class="result-tab-meta">${escapeHtml(meta)}</span>
+          </button>
+        `;
+      })
       .join("");
-
-    renderActiveContainer();
   }
 
   function itemById(itemId) {
     return state.result.items.find((item) => item.id === itemId);
   }
 
-  function boxRangeFor(container, itemId) {
-    const labels = (container.placements || [])
-      .filter((placement) => placement.itemId === itemId && placement.boxNo)
-      .map((placement) => placement.boxNo);
+  function boxRangeFromPlacements(placements, itemId) {
+    return boxRangeFromLabels(
+      (placements || [])
+        .filter((placement) => placement.itemId === itemId && placement.boxNo)
+        .map((placement) => placement.boxNo)
+    );
+  }
+
+  function boxRangeFromLabels(labels) {
     if (!labels.length) {
       return "";
     }
     return labels.length === 1
       ? labels[0]
       : `${labels[0]} ~ ${labels[labels.length - 1]}`;
+  }
+
+  function entryColor(entry) {
+    const item = itemById(entry.itemId);
+    const index =
+      entry.colorIndex !== undefined && entry.colorIndex !== null
+        ? Number(entry.colorIndex) || 0
+        : item
+        ? item.colorIndex
+        : 0;
+    return COLORS[
+      ((index % COLORS.length) + COLORS.length) % COLORS.length
+    ];
+  }
+
+  function entryBoxRange(view, entry) {
+    if (Array.isArray(entry.boxNos) && entry.boxNos.length) {
+      return boxRangeFromLabels(entry.boxNos);
+    }
+    return boxRangeFromPlacements(view.placements, entry.itemId);
+  }
+
+  function renderDimUsage(view) {
+    const dimensions = view.dimensions;
+    const rows = [
+      ["长度", dimensions.length.used / 1000, dimensions.length.capacity / 1000, "m", dimensions.length],
+      ["宽度", dimensions.width.used / 1000, dimensions.width.capacity / 1000, "m", dimensions.width],
+      ["高度", dimensions.height.used / 1000, dimensions.height.capacity / 1000, "m", dimensions.height],
+      ["占地", dimensions.footprint.used, dimensions.footprint.capacity, "m²", dimensions.footprint],
+    ];
+    elements.dimUsage.innerHTML = rows
+      .map(([label, used, capacity, unit, stat]) => {
+        const barWidth = Math.min(100, Math.max(0, stat.rate * 100));
+        const value = stat.over
+          ? `${formatNumber(used, 2)}/${formatNumber(
+              capacity,
+              2
+            )}${unit} · 超出 ${formatNumber(used - capacity, 2)}`
+          : `${formatNumber(used, 2)}/${formatNumber(
+              capacity,
+              2
+            )}${unit} · ${percent(stat.rate)}`;
+        const title = `${label}：已用 ${formatNumber(
+          used,
+          2
+        )} ${unit}，容量 ${formatNumber(capacity, 2)} ${unit}，剩余 ${formatNumber(
+          Math.max(0, capacity - used),
+          2
+        )} ${unit}`;
+        return `
+          <div class="dim-row${stat.over ? " over" : ""}" title="${title}">
+            <span class="dim-label">${label}</span>
+            <span class="dim-track"><i style="width:${barWidth}%"></i></span>
+            <span class="dim-value">${value}</span>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  function renderLoadAdvice(view, views) {
+    let advice = "";
+    let warn = false;
+    if (!view.units) {
+      advice = view.manual
+        ? "本柜为空，不计入建议柜数。可从其他柜移入货物，或点「导入自动方案」恢复本柜自动摆放。"
+        : "本柜没有货物。";
+    } else if (view.dimensions.height.over) {
+      advice = `有货物高出柜顶 ${formatNumber(
+        view.dimensions.height.used - view.dimensions.height.capacity,
+        0
+      )} mm（对调时可临时抬出），确认后请降回柜内。`;
+      warn = true;
+    } else if (
+      views.filter((entry) => entry.units > 0).length > 1 &&
+      isLowLoad(view)
+    ) {
+      advice = "本柜装载率偏低，可把货物移到其他柜合并，避免多订一个柜。";
+      warn = true;
+    }
+    elements.loadAdvice.hidden = !advice;
+    elements.loadAdvice.textContent = advice;
+    elements.loadAdvice.classList.toggle("warn", warn);
+  }
+
+  function renderActiveStats(view, views) {
+    const occupiedCount = views.filter((entry) => entry.units > 0).length;
+    const emptyCount = views.length - occupiedCount;
+    elements.visualTitle.textContent = view.label;
+    elements.summaryTitle.textContent = view.units
+      ? `${view.label}明细`
+      : `${view.label}（空柜）`;
+    elements.containerUnits.textContent = formatInteger(view.units);
+    elements.containerVolumeRate.textContent = percent(
+      view.volumeUtilization
+    );
+    elements.containerWeightRate.textContent = percent(
+      view.weightUtilization
+    );
+    elements.detailScope.textContent = `${view.label} / ${occupiedCount} 个在用柜${
+      emptyCount ? ` · ${emptyCount} 个空柜` : ""
+    }`;
+    renderDimUsage(view);
+    renderLoadAdvice(view, views);
+
+    if (!view.summary.length) {
+      elements.containerLoadList.innerHTML = `<p class="load-list-empty">${
+        view.manual ? "本柜手动物品已全部移出。" : "本柜没有货物。"
+      }</p>`;
+    } else {
+      elements.containerLoadList.innerHTML = view.summary
+        .map((entry) => {
+          const color = entryColor(entry);
+          return `
+          <div class="load-list-item">
+            <i class="color-dot" style="background:${color}"></i>
+            <div class="load-list-copy">
+              <strong>${escapeHtml(
+                entryBoxRange(view, entry) || entry.name
+              )}</strong>
+              <span>${escapeHtml(entry.orientation)} · ${escapeHtml(
+            entry.supportDescription
+          )}</span>
+            </div>
+            <div class="load-list-count">
+              <strong>${formatInteger(entry.count)} 件</strong>
+              <span>${formatNumber(entry.cbm, 3)} CBM</span>
+            </div>
+          </div>
+        `;
+        })
+        .join("");
+    }
+
+    if (!view.summary.length) {
+      elements.loadTableBody.innerHTML = `
+        <tr><td class="empty-cell" colspan="8">${
+          view.manual
+            ? "本柜为空，未计入建议柜数。"
+            : "本柜暂无货物。"
+        }</td></tr>
+      `;
+    } else {
+      elements.loadTableBody.innerHTML = view.summary
+        .map((entry) => {
+          const color = entryColor(entry);
+          return `
+          <tr>
+            <td>${escapeHtml(view.label)}</td>
+            <td>
+              <div class="table-name">
+                <i class="color-dot" style="background:${color}"></i>
+                <div>
+                  <strong>${escapeHtml(entry.name)}</strong>
+                  <span>${escapeHtml(entry.sku || "未填写货号")}</span>
+                </div>
+              </div>
+            </td>
+            <td>${formatInteger(entry.count)}</td>
+            <td>${escapeHtml(entryBoxRange(view, entry))}</td>
+            <td>${escapeHtml(entry.orientation)}</td>
+            <td>${escapeHtml(entry.supportDescription)}</td>
+            <td>${formatNumber(entry.cbm, 3)} CBM</td>
+            <td>${formatNumber(entry.weight, 1)} kg</td>
+          </tr>
+        `;
+        })
+        .join("");
+    }
+  }
+
+  function refreshResultDisplay() {
+    if (!state.result || !state.result.ok) {
+      return;
+    }
+    const views = containerViews();
+    updateResultHeader(views);
+    updateContainerTabs(views);
+    const view = views[state.activeTab];
+    if (view) {
+      renderActiveStats(view, views);
+    }
+  }
+
+  function renderResult(result) {
+    elements.emptyState.hidden = true;
+    elements.resultError.hidden = true;
+    elements.resultContent.hidden = false;
+    const views = containerViews();
+    updateResultHeader(views);
+    updateContainerTabs(views);
+    renderActiveContainer();
   }
 
   function rowBoxLabel(row) {
@@ -1191,79 +1642,18 @@
       0,
       Math.min(result.containers.length - 1, state.activeTab)
     );
-    const container = result.containers[state.activeTab];
-    const label = container.label || `第 ${container.index} 柜`;
-    elements.visualTitle.textContent = label;
-    elements.summaryTitle.textContent = `${label}明细`;
-    elements.containerUnits.textContent = formatInteger(
-      container.placements.length
-    );
-    elements.containerVolumeRate.textContent = percent(
-      container.volumeUtilization
-    );
-    elements.containerWeightRate.textContent = percent(
-      container.weightUtilization
-    );
-    elements.detailScope.textContent = `${label} / 共 ${result.containers.length} 柜`;
-
-    elements.containerTabs
-      .querySelectorAll("[data-tab]")
-      .forEach((button) => {
-        const active = Number(button.dataset.tab) === state.activeTab;
-        button.classList.toggle("active", active);
-        button.setAttribute("aria-selected", String(active));
-      });
-
-    elements.containerLoadList.innerHTML = container.summary
-      .map((entry) => {
-        const item = itemById(entry.itemId);
-        const color = COLORS[item ? item.colorIndex : 0];
-        return `
-          <div class="load-list-item">
-            <i class="color-dot" style="background:${color}"></i>
-            <div class="load-list-copy">
-              <strong>${escapeHtml(boxRangeFor(container, entry.itemId) || entry.name)}</strong>
-              <span>${escapeHtml(entry.orientation)} · ${escapeHtml(entry.supportDescription)}</span>
-            </div>
-            <div class="load-list-count">
-              <strong>${formatInteger(entry.count)} 件</strong>
-              <span>${formatNumber(entry.cbm, 3)} CBM</span>
-            </div>
-          </div>
-        `;
-      })
-      .join("");
-
-    elements.loadTableBody.innerHTML = container.summary
-      .map((entry) => {
-        const item = itemById(entry.itemId);
-        const color = COLORS[item ? item.colorIndex : 0];
-        return `
-          <tr>
-            <td>${escapeHtml(label)}</td>
-            <td>
-              <div class="table-name">
-                <i class="color-dot" style="background:${color}"></i>
-                <div>
-                  <strong>${escapeHtml(entry.name)}</strong>
-                  <span>${escapeHtml(item && item.sku ? item.sku : "未填写货号")}</span>
-                </div>
-              </div>
-            </td>
-            <td>${formatInteger(entry.count)}</td>
-            <td>${escapeHtml(boxRangeFor(container, entry.itemId))}</td>
-            <td>${escapeHtml(entry.orientation)}</td>
-            <td>${escapeHtml(entry.supportDescription)}</td>
-            <td>${formatNumber(entry.cbm, 3)} CBM</td>
-            <td>${formatNumber(entry.weight, 1)} kg</td>
-          </tr>
-        `;
-      })
-      .join("");
+    const views = containerViews();
+    const view = views[state.activeTab];
+    if (!view) {
+      return;
+    }
+    renderActiveStats(view, views);
 
     if (renderer) {
-      renderer.setContainer(container, container.container || result.container);
-      if (!ensureManualPlanLoaded()) {
+      renderer.setContainer(view.raw, view.template);
+      if (ensureManualPlanLoaded()) {
+        refreshResultDisplay();
+      } else {
         syncManualScene();
         refreshManualPanel();
       }
@@ -1553,6 +1943,7 @@
   }
 
   function refreshManualPanel() {
+    refreshResultDisplay();
     if (!renderer) {
       return;
     }
@@ -1579,16 +1970,21 @@
       state.result && Array.isArray(state.result.containers)
         ? state.result.containers
         : [];
+    const views = containers.length ? containerViews() : [];
     const activeIndex = Number(state.activeTab) || 0;
     const previousTarget = elements.manualMoveTarget.value;
     elements.manualMoveTarget.textContent = "";
-    containers.forEach((entry, index) => {
+    views.forEach((entry, index) => {
       if (index === activeIndex) {
         return;
       }
       const option = document.createElement("option");
       option.value = String(index);
-      option.textContent = entry.label || `第 ${entry.index} 柜`;
+      option.textContent = entry.units
+        ? `${entry.label} · ${entry.units} 件 · ${percent(
+            entry.volumeUtilization
+          )}`
+        : `${entry.label} · 空柜`;
       elements.manualMoveTarget.appendChild(option);
     });
     if (
@@ -1934,6 +2330,9 @@
       return;
     }
     list.splice(index, 1);
+    if (!list.length) {
+      state.manualOverride[String(state.activeTab)] = true;
+    }
     renderer.selectManual(null);
     syncManualScene();
     refreshManualPanel();
@@ -2018,34 +2417,37 @@
       return;
     }
 
+    const views = containerViews();
+    const totals = displayTotals(views);
     const rows = [
       ["柜号", "货号", "名称", "件数", "箱号", "摆法", "体积(CBM)", "重量(kg)"],
     ];
-    state.result.containers.forEach((container) => {
-      container.summary.forEach((entry) => {
-        const item = itemById(entry.itemId);
-        rows.push([
-          container.label || `第 ${container.index} 柜`,
-          item ? item.sku : "",
-          entry.name,
-          entry.count,
-          boxRangeFor(container, entry.itemId),
-          entry.orientation,
-          entry.cbm.toFixed(3),
-          entry.weight.toFixed(1),
-        ]);
+    views
+      .filter((view) => view.units > 0)
+      .forEach((view) => {
+        view.summary.forEach((entry) => {
+          rows.push([
+            view.label,
+            entry.sku || "",
+            entry.name,
+            entry.count,
+            entryBoxRange(view, entry),
+            entry.orientation,
+            entry.cbm.toFixed(3),
+            entry.weight.toFixed(1),
+          ]);
+        });
       });
-    });
     rows.push([]);
     rows.push([
       "总计",
       "",
       "",
-      state.result.totals.units,
+      totals.units,
       "",
       "",
-      state.result.totals.cbm.toFixed(3),
-      state.result.totals.weight.toFixed(1),
+      totals.cbm.toFixed(3),
+      totals.weight.toFixed(1),
     ]);
 
     const csv = rows
