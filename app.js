@@ -1334,6 +1334,10 @@
       elements.resultTitle.textContent = `${totals.containers} 个柜混装结果${
         totals.manual ? " · 手动" : ""
       }`;
+    } else if (totals.containers > 1) {
+      elements.resultTitle.textContent = `${totals.containers} 个 ${
+        state.result.container.name
+      } 装柜结果${totals.manual ? " · 手动" : ""}`;
     } else {
       elements.resultTitle.textContent = `${
         state.result.container.name
@@ -1344,7 +1348,9 @@
     }平均容积率 ${percent(totals.volumeUtilization)}`;
     elements.metricContainers.textContent = formatInteger(totals.containers);
     elements.metricContainersHint.textContent = totals.emptyContainers
-      ? `另 ${totals.emptyContainers} 个空柜未计入`
+      ? `${
+          totals.containers ? "另 " : ""
+        }${totals.emptyContainers} 个空柜未计入`
       : totals.manual
       ? "已按手动摆放统计"
       : "全部货物已分配";
@@ -1479,9 +1485,11 @@
     let advice = "";
     let warn = false;
     if (!view.units) {
-      advice = view.manual
+      advice = !view.manual
+        ? "本柜没有货物。"
+        : state.manualMode
         ? "本柜为空，不计入建议柜数。可从其他柜移入货物，或点「导入自动方案」恢复本柜自动摆放。"
-        : "本柜没有货物。";
+        : "本柜为空，不计入建议柜数。进入手动微调后点「导入自动方案」，或点「开始计算」清空手动方案并重新自动排柜。";
     } else if (view.dimensions.height.over) {
       advice = `有货物高出柜顶 ${formatNumber(
         view.dimensions.height.used - view.dimensions.height.capacity,
